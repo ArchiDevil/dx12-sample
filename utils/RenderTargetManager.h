@@ -54,9 +54,10 @@ public:
                                                      bool isUAV = false,
                                                      const D3D12_CLEAR_VALUE* clearValue = nullptr);
 
-    std::shared_ptr<DepthStencil> CreateDepthStencil(DXGI_FORMAT format,
-                                                     UINT64 width,
-                                                     UINT height,
+    std::shared_ptr<DepthStencil> CreateDepthStencil(UINT64 width,
+                                                     UINT height, 
+                                                     DXGI_FORMAT format,
+                                                     DXGI_FORMAT viewFormat,
                                                      const std::wstring& dsName = L"",
                                                      bool isUAV = false,
                                                      const D3D12_CLEAR_VALUE* clearValue = nullptr);

@@ -542,7 +542,7 @@ void DX12Sample::CreateTextures()
 void DX12Sample::CreateDXGIFactory()
 {
     // create dx objects
-    ThrowIfFailed(CreateDXGIFactory1(IID_PPV_ARGS(&_DXFactory)));
+    ThrowIfFailed(CreateDXGIFactory2(0, IID_PPV_ARGS(&_DXFactory)));
 }
 
 void DX12Sample::CreateDevice()
@@ -564,20 +564,24 @@ void DX12Sample::CreateCommandQueue()
 void DX12Sample::CreateSwapChain()
 {
     // Create swapChain in factory using CmdQueue
-    DXGI_SWAP_CHAIN_DESC swapChainDesc = {};
+    DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
+    swapChainDesc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
     swapChainDesc.BufferCount = _swapChainBuffersCount;
-    swapChainDesc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    swapChainDesc.BufferDesc.Width = m_width;
-    swapChainDesc.BufferDesc.Height = m_height;
     swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-    swapChainDesc.OutputWindow = m_hwnd;
+    swapChainDesc.Flags = 0;
+    swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    swapChainDesc.Height = m_height;
+    swapChainDesc.Width = m_width;
     swapChainDesc.SampleDesc.Count = 1;
-    swapChainDesc.Windowed = TRUE;
+    swapChainDesc.SampleDesc.Quality = 0;
+    swapChainDesc.Scaling = DXGI_SCALING_STRETCH;
+    swapChainDesc.Stereo = FALSE;
+    swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 
-    IDXGISwapChain* pTmpSwapChain = nullptr;
-    ThrowIfFailed(_DXFactory->CreateSwapChain(_cmdQueue.Get(), &swapChainDesc, &pTmpSwapChain));
-    _swapChain.Attach(reinterpret_cast<IDXGISwapChain3*>(pTmpSwapChain));
+    ComPtr<IDXGISwapChain1> pTmpSwapChain = nullptr;
+    ThrowIfFailed(_DXFactory->CreateSwapChainForHwnd(_cmdQueue.Get(), m_hwnd, &swapChainDesc, nullptr, nullptr, &pTmpSwapChain));
+
+    pTmpSwapChain.Get()->QueryInterface<IDXGISwapChain3>(&_swapChain);
 }
 
 void DX12Sample::CreateTexturesHeap()

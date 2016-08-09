@@ -93,9 +93,10 @@ std::shared_ptr<RenderTarget> RenderTargetManager::CreateRenderTarget(DXGI_FORMA
     return outPtr;
 }
 
-std::shared_ptr<DepthStencil> RenderTargetManager::CreateDepthStencil(DXGI_FORMAT format,
-                                                                      UINT64 width,
-                                                                      UINT height,
+std::shared_ptr<DepthStencil> RenderTargetManager::CreateDepthStencil(UINT64 width,
+                                                                      UINT height, 
+                                                                      DXGI_FORMAT format,
+                                                                      DXGI_FORMAT viewFormat,
                                                                       const std::wstring& dsName /*= L""*/,
                                                                       bool isUAV /*= false*/,
                                                                       const D3D12_CLEAR_VALUE* clearValue /*= nullptr*/)
@@ -127,7 +128,7 @@ std::shared_ptr<DepthStencil> RenderTargetManager::CreateDepthStencil(DXGI_FORMA
     D3D12_CLEAR_VALUE defaultClearValue = {};
     if (!clearValue)
     {
-        defaultClearValue.Format = format;
+        defaultClearValue.Format = viewFormat;
         defaultClearValue.DepthStencil.Depth = 1.0f;
         defaultClearValue.DepthStencil.Stencil = 0;
     }
@@ -152,7 +153,11 @@ std::shared_ptr<DepthStencil> RenderTargetManager::CreateDepthStencil(DXGI_FORMA
     D3D12_CPU_DESCRIPTOR_HANDLE handle = _dsvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
     handle.ptr += descriptorsCount * incSize;
 
-    _device->CreateDepthStencilView(resource.Get(), nullptr, handle);
+    D3D12_DEPTH_STENCIL_VIEW_DESC viewDescription = {};
+    viewDescription.Format = viewFormat;
+    viewDescription.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+
+    _device->CreateDepthStencilView(resource.Get(), &viewDescription, handle);
 
     _dsvDescriptors[descriptorsCount] = handle;
     std::shared_ptr<DepthStencil> outPtr = std::make_shared<DepthStencil>(descriptorsCount, resource, defaultClearValue);

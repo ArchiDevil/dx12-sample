@@ -589,12 +589,12 @@ void SceneManager::CreateRenderTargets()
     clearValue.Color[3] = 1.0f;
     clearValue.Format = DXGI_FORMAT_R32_FLOAT;
     _mrtRts[2] = _rtManager->CreateRenderTarget(DXGI_FORMAT_R32_FLOAT, _screenWidth, _screenHeight, L"DepthRT", false, &clearValue);
-    _mrtDepth = _rtManager->CreateDepthStencil(DXGI_FORMAT_D24_UNORM_S8_UINT, _screenWidth, _screenHeight, L"MRTDepthRT");
+    _mrtDepth = _rtManager->CreateDepthStencil(_screenWidth, _screenHeight, DXGI_FORMAT_R24G8_TYPELESS, DXGI_FORMAT_D24_UNORM_S8_UINT, L"MRTDepthRT");
 
     _HDRRt = _rtManager->CreateRenderTarget(DXGI_FORMAT_R16G16B16A16_FLOAT, _screenWidth, _screenHeight, L"HDRRT", true);
 
     if (_cmdLineOpts.shadow_pass)
-        _shadowDepth = _rtManager->CreateDepthStencil(DXGI_FORMAT_D24_UNORM_S8_UINT, depthMapSize, depthMapSize, L"ShadowPassDepthRT");
+        _shadowDepth = _rtManager->CreateDepthStencil(depthMapSize, depthMapSize, DXGI_FORMAT_R24G8_TYPELESS, DXGI_FORMAT_D24_UNORM_S8_UINT, L"ShadowPassDepthRT");
 }
 
 void SceneManager::CreateCommandLists()
