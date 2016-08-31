@@ -8,6 +8,7 @@ enum optTypes
     disable_root_constants,
     disable_shadow_pass,
     enable_tessellation,
+    legacy_swapchain,
 };
 
 enum class ShaderType
@@ -71,6 +72,7 @@ struct CommandLineOptions
     bool shadow_pass = true;
     bool textures = true;
     bool tessellation = false;
+    bool legacy_swapchain = false;
 };
 
 template<typename T, size_t N>

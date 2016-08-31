@@ -23,7 +23,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         { L"--disable_root_constants",        disable_root_constants },
         { L"--disable_textures",              disable_textures },
         { L"--disable_shadow_pass",           disable_shadow_pass },
-        { L"--enable_tessellation",           enable_tessellation}
+        { L"--enable_tessellation",           enable_tessellation},
+        { L"--legacy_swapchain",              legacy_swapchain }
     };
 
     std::set<optTypes> arguments {};
