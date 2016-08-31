@@ -82,10 +82,10 @@ void SphericalCamera::UpdateMatrices()
     XMVECTOR m = {camPos.x, camPos.y, camPos.z, camPos.w};
 
     if (_type == ProjectionType::Perspective)
-        _projectionMatrix = XMMatrixPerspectiveFovRH(_fov, _aspectRatio, _zNear, _zFar);
+        _projectionMatrix = XMMatrixPerspectiveFovLH(_fov, _aspectRatio, _zNear, _zFar);
     else if (_type == ProjectionType::Orthographic)
-        _projectionMatrix = XMMatrixOrthographicRH(_screenWidth, _screenHeight, _zNear, _zFar);
+        _projectionMatrix = XMMatrixOrthographicLH(_screenWidth, _screenHeight, _zNear, _zFar);
 
-    _viewMatrix = XMMatrixLookAtRH(m, {_centerPosition.x, _centerPosition.y, _centerPosition.z, 1.0}, {0.0, 1.0, 0.0, 1.0});
+    _viewMatrix = XMMatrixLookAtLH(m, {_centerPosition.x, _centerPosition.y, _centerPosition.z, 1.0}, {0.0, 1.0, 0.0, 1.0});
 }
 }

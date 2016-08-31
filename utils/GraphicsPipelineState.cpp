@@ -49,8 +49,7 @@ void GraphicsPipelineState::SetShaderCode(ComPtr<ID3DBlob> pShaderCode, ShaderTy
         _description.DS = {pShaderCode->GetBufferPointer(), pShaderCode->GetBufferSize()};
         break;
     case ShaderType::Compute:
-        // doesn't support compute pipeline
-        throw std::runtime_error("Cannot set compute shader for now. Not implemented yet.");
+        throw std::runtime_error("Compute shaders must be used with compute pipeline states.");
     default:
         throw std::runtime_error("Unknown shader type");
     }
