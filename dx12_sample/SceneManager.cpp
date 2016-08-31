@@ -47,17 +47,17 @@ SceneManager::SceneManager(ComPtr<ID3D12Device> pDevice,
     , _swapChainRTs(_swapChainRTs)
     , _rtManager(rtManager)
     , _viewCamera(Graphics::ProjectionType::Perspective,
-                 0.1f,
-                 objectOnSceneInRow * 5.0f,
-                 5.0f * M_PI / 18.0f,
-                 static_cast<float>(screenWidth),
-                 static_cast<float>(screenHeight))
+                  0.1f,
+                  objectOnSceneInRow * 5.0f,
+                  5.0f * M_PI / 18.0f,
+                  static_cast<float>(screenWidth),
+                  static_cast<float>(screenHeight))
     , _shadowCamera(Graphics::ProjectionType::Perspective,
-                   1.0f,
-                   objectOnSceneInRow * 5.0f,
-                   9.0f * M_PI / 18.0f,
-                   depthMapSize / depthMapSize * objectOnSceneInRow * 3.0f,
-                   depthMapSize / depthMapSize * objectOnSceneInRow * 3.0f)
+                    1.0f,
+                    objectOnSceneInRow * 5.0f,
+                    9.0f * M_PI / 18.0f,
+                    depthMapSize / depthMapSize * objectOnSceneInRow * 3.0f,
+                    depthMapSize / depthMapSize * objectOnSceneInRow * 3.0f)
 {
     assert(pDevice);
     assert(pTexturesHeap);
@@ -85,18 +85,18 @@ SceneManager::SceneManager(ComPtr<ID3D12Device> pDevice,
             _threadPool[tid] = std::thread([this, tid] {ThreadDrawRoutine(tid); });
     }
 
+    // Have to create Fence and Event.
+    ThrowIfFailed(pDevice->CreateFence(0,
+                                       D3D12_FENCE_FLAG_NONE,
+                                       IID_PPV_ARGS(&_frameFence)));
+    _frameEndEvent = CreateEvent(NULL, FALSE, FALSE, nullptr);
+
     CreateRenderTargets();
     CreateRootSignatures();
     CreateShadersAndPSOs();
     CreateCommandLists();
     CreateFrameConstantBuffers();
     PopulateClearPassCommandList();
-
-    // Have to create Fence and Event.
-    ThrowIfFailed(pDevice->CreateFence(0,
-                                       D3D12_FENCE_FLAG_NONE,
-                                       IID_PPV_ARGS(&_frameFence)));
-    _frameEndEvent = CreateEvent(NULL, FALSE, FALSE, nullptr);
 
     std::vector<screenQuadVertex> screenQuadVertices =
     {
@@ -181,7 +181,7 @@ SceneManager::SceneManager(ComPtr<ID3D12Device> pDevice,
         pDevice->CreateCommittedResource(&defaultHeapProp,
                                          D3D12_HEAP_FLAG_NONE,
                                          &intermediateBufferDesc,
-                                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                         D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
                                          nullptr,
                                          IID_PPV_ARGS(&_finalIntensityBuffer));
         _finalIntensityBuffer->SetName(L"FinalIntensity");
@@ -259,7 +259,7 @@ void SceneManager::ExecuteCommandLists(const CommandList & commandList)
     ID3D12CommandList* cmdListsArray[] = {commandList.GetInternal().Get()};
     _cmdQueue->ExecuteCommandLists((UINT)countof(cmdListsArray), cmdListsArray);
 
-    _fenceValue = 1;
+    _fenceValue++;
     WaitCurrentFrame();
 }
 
@@ -281,14 +281,13 @@ void SceneManager::PopulateClearPassCommandList()
 
     PIXBeginEvent(pCmdList, 0, "Render targets clear");
 
-    D3D12_RESOURCE_BARRIER barriers[4] = {
+    D3D12_RESOURCE_BARRIER barriers[] = {
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[0]->_texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[1]->_texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[2]->_texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
-        CD3DX12_RESOURCE_BARRIER::Transition(_mrtDepth->_texture.Get(),  D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE),
     };
 
-    pCmdList->ResourceBarrier(4, barriers);
+    pCmdList->ResourceBarrier((UINT)countof(barriers), barriers);
 
     RenderTarget* rts[8] = {_mrtRts[0].get(), _mrtRts[1].get(), _mrtRts[2].get()};
     // is not necessary, but just for test
@@ -394,20 +393,30 @@ void SceneManager::PopulateLightPassCommandList()
     _rtManager->BindRenderTargets(rts, nullptr, *_lightPassCmdList);
     _rtManager->ClearRenderTarget(*rts[0], *_lightPassCmdList);
 
-    D3D12_RESOURCE_BARRIER barriers[4] = {
+    D3D12_RESOURCE_BARRIER barriers[] = {
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[0]->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[1]->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[2]->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
-        CD3DX12_RESOURCE_BARRIER::Transition(_shadowDepth->_texture.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
     };
 
-    pCmdList->ResourceBarrier(4, barriers);
+    pCmdList->ResourceBarrier((UINT)countof(barriers), barriers);
+
+    if (_cmdLineOpts.shadow_pass)
+        pCmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(_shadowDepth->_texture.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
 
     pCmdList->SetGraphicsRootSignature(_lightRootSignature.GetInternal().Get());
 
     D3D12_GPU_DESCRIPTOR_HANDLE texHandle = _customsHeap->GetGPUDescriptorHandleForHeapStart();
     pCmdList->SetGraphicsRootDescriptorTable(0, texHandle);
-    pCmdList->SetGraphicsRootConstantBufferView(1, _cbvSceneParams->GetGPUVirtualAddress());
+
+    ppHeaps[0] = _texturesHeap.Get();
+    pCmdList->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
+
+    texHandle = _texturesHeap->GetGPUDescriptorHandleForHeapStart();
+    texHandle.ptr += texHeapIncSize * 3;
+    pCmdList->SetGraphicsRootDescriptorTable(1, texHandle);
+
+    pCmdList->SetGraphicsRootConstantBufferView(2, _cbvSceneParams->GetGPUVirtualAddress());
 
     _objScreenQuad->Draw(pCmdList);
     PIXEndEvent(pCmdList);
@@ -419,6 +428,9 @@ void SceneManager::PopulateLightPassCommandList()
     PIXBeginEvent(pCmdList, 0, "Luminance computing");
     pCmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(_HDRRt->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
     pCmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(_finalIntensityBuffer.Get(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+
+    ppHeaps[0] = _customsHeap.Get();
+    pCmdList->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
 
     pCmdList->SetPipelineState(_IntensityPassState->GetPSO().Get());
     pCmdList->SetComputeRootSignature(_computePassRootSignature.GetInternal().Get());
@@ -483,7 +495,7 @@ void SceneManager::ThreadDrawRoutine(size_t threadId)
     UINT texHeapIncSize = _device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     while (true)
     {
-        uint32_t threadObjIndex = 0;
+        uint32_t currentObjectIndex = 0;
         if (!_threadPool.empty())
         {
             std::unique_lock<std::mutex> lock(_workerMutex);
@@ -499,7 +511,7 @@ void SceneManager::ThreadDrawRoutine(size_t threadId)
                     return; // terminate thread
             }
 
-            threadObjIndex = _drawObjectIndex++;
+            currentObjectIndex = _drawObjectIndex++;
             // mutex is unlocked here
         }
 
@@ -537,31 +549,31 @@ void SceneManager::ThreadDrawRoutine(size_t threadId)
         pThreadCmdList->SetGraphicsRootConstantBufferView(1, _cbvMrtFrameParams->GetGPUVirtualAddress());
 
         // draw all objects we can
-        while (threadObjIndex < _objects.size())
+        while (currentObjectIndex < _objects.size())
         {
-            pThreadCmdList->SetGraphicsRootConstantBufferView(0, _objects[threadObjIndex]->GetConstantBuffer()->GetGPUVirtualAddress());
+            pThreadCmdList->SetGraphicsRootConstantBufferView(0, _objects[currentObjectIndex]->GetConstantBuffer()->GetGPUVirtualAddress());
 
             if (_cmdLineOpts.textures)
             {
+                UINT parameterOffset = _cmdLineOpts.root_constants ? 3 : 2;
+
+                // diffuse texture binding
                 D3D12_GPU_DESCRIPTOR_HANDLE texHandle = _texturesHeap->GetGPUDescriptorHandleForHeapStart();
-                texHandle.ptr += texHeapIncSize * ((threadObjIndex + 1) % 3);
-                if (_cmdLineOpts.root_constants && _cmdLineOpts.textures)
-                    pThreadCmdList->SetGraphicsRootDescriptorTable(3, texHandle);
-                else if (!_cmdLineOpts.root_constants && _cmdLineOpts.textures)
-                    pThreadCmdList->SetGraphicsRootDescriptorTable(2, texHandle);
+                texHandle.ptr += texHeapIncSize * ((currentObjectIndex + 1) % 3);
+                pThreadCmdList->SetGraphicsRootDescriptorTable(parameterOffset, texHandle);
             }
 
             if (_cmdLineOpts.root_constants)
             {
-                float shift = 0.125f * threadObjIndex;
+                float shift = 0.125f * currentObjectIndex;
                 pThreadCmdList->SetGraphicsRoot32BitConstant(2, *reinterpret_cast<uint32_t*>(&shift), 0);
             }
 
-            _objects[threadObjIndex]->Draw(pThreadCmdList);
+            _objects[currentObjectIndex]->Draw(pThreadCmdList);
             // increment object count safely
             {
                 std::unique_lock<std::mutex> lock(_workerMutex);
-                threadObjIndex = _drawObjectIndex++;
+                currentObjectIndex = _drawObjectIndex++;
             }
         }
 
@@ -580,7 +592,7 @@ void SceneManager::CreateRenderTargets()
     _swapChainRTs = _rtManager->CreateRenderTargetsForSwapChain(_swapChain);
 
     _mrtRts[0] = _rtManager->CreateRenderTarget(DXGI_FORMAT_R8G8B8A8_UNORM, _screenWidth, _screenHeight, L"DiffuseRT");
-    _mrtRts[1] = _rtManager->CreateRenderTarget(DXGI_FORMAT_R8G8B8A8_SNORM, _screenWidth, _screenHeight, L"NormalsRT");
+    _mrtRts[1] = _rtManager->CreateRenderTarget(DXGI_FORMAT_R11G11B10_FLOAT, _screenWidth, _screenHeight, L"NormalsRT");
 
     D3D12_CLEAR_VALUE clearValue;
     clearValue.Color[0] = 1.0f;
@@ -595,6 +607,21 @@ void SceneManager::CreateRenderTargets()
 
     if (_cmdLineOpts.shadow_pass)
         _shadowDepth = _rtManager->CreateDepthStencil(depthMapSize, depthMapSize, DXGI_FORMAT_R24G8_TYPELESS, DXGI_FORMAT_D24_UNORM_S8_UINT, L"ShadowPassDepthRT");
+
+    // move resources into correct states to avoid DXDebug errors on first barrier calls
+    D3D12_RESOURCE_BARRIER barriers[] = {
+        CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[0]->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+        CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[1]->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+        CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[2]->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+        CD3DX12_RESOURCE_BARRIER::Transition(_HDRRt->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+        CD3DX12_RESOURCE_BARRIER::Transition(_mrtDepth->_texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE)
+    };
+
+    CommandList temporaryCmdList {CommandListType::Direct, _device};
+    temporaryCmdList.GetInternal()->ResourceBarrier((UINT)countof(barriers), barriers);
+    temporaryCmdList.Close();
+
+    ExecuteCommandLists(temporaryCmdList);
 }
 
 void SceneManager::CreateCommandLists()
@@ -676,6 +703,13 @@ void SceneManager::CreateFrameConstantBuffers()
 
 void SceneManager::CreateMRTPassRootSignature()
 {
+    // 4 entries
+    //
+    // 1. constant buffer with model parameters
+    // 2. constant buffer with frame parameters
+    // 3. root constants with texture coords offset
+    // 4. texture table with diffuse texture
+
     UINT entriesCount = 4;
     if (!_cmdLineOpts.root_constants)
         entriesCount--;
@@ -702,12 +736,15 @@ void SceneManager::CreateMRTPassRootSignature()
 
 void SceneManager::CreateLightPassRootSignature()
 {
-    _lightRootSignature.Init(2, 2);
+    _lightRootSignature.Init(3, 2);
 
     _lightRootSignature[0].InitAsDescriptorsTable(1);
     _lightRootSignature[0].InitTableRange(0, 0, 4, D3D12_DESCRIPTOR_RANGE_TYPE_SRV);
 
-    _lightRootSignature[1].InitAsCBV(0);
+    _lightRootSignature[1].InitAsDescriptorsTable(1);
+    _lightRootSignature[1].InitTableRange(0, 4, 1, D3D12_DESCRIPTOR_RANGE_TYPE_SRV);
+
+    _lightRootSignature[2].InitAsCBV(0);
 
     StaticSampler textureSampler = {};
     D3D12_STATIC_SAMPLER_DESC& textureSamplerDesc = textureSampler;
@@ -724,7 +761,7 @@ void SceneManager::CreateLightPassRootSignature()
     shadowSamplerDesc.ShaderRegister = 1;
 
     _lightRootSignature.InitStaticSampler(0, textureSampler);
-    _lightRootSignature.InitStaticSampler(0, shadowSampler);
+    _lightRootSignature.InitStaticSampler(1, shadowSampler);
 
     _lightRootSignature.Finalize(_device, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 }
@@ -804,7 +841,7 @@ void SceneManager::CreateDepthPassPSO()
     }
 
     _depthPassState = std::make_unique<GraphicsPipelineState>(_depthPassRootSignature,
-                                                             D3D12_INPUT_LAYOUT_DESC {defaultGeometryInputElements, _countof(defaultGeometryInputElements)});
+                                                              D3D12_INPUT_LAYOUT_DESC {defaultGeometryInputElements, _countof(defaultGeometryInputElements)});
     _depthPassState->SetShaderCode(VSblob, ShaderType::Vertex);
     if (_cmdLineOpts.tessellation)
     {
@@ -872,7 +909,7 @@ void SceneManager::CreateLightPassPSO()
     ShadersUtils::CompileShaderFromFile(squadFileName, ShaderType::Pixel, &PSblob, macro);
 
     _lightPassState = std::make_unique<GraphicsPipelineState>(_lightRootSignature,
-                                                             D3D12_INPUT_LAYOUT_DESC {screenQuadInputElements, _countof(screenQuadInputElements)});
+                                                              D3D12_INPUT_LAYOUT_DESC {screenQuadInputElements, _countof(screenQuadInputElements)});
     _lightPassState->SetShaderCode(VSblob, ShaderType::Vertex);
     _lightPassState->SetShaderCode(PSblob, ShaderType::Pixel);
     _lightPassState->SetRenderTargetFormats({DXGI_FORMAT_R16G16B16A16_FLOAT});
@@ -907,7 +944,7 @@ void SceneManager::CreateMRTPassPSO()
     }
 
     _mrtPipelineState = std::make_unique<GraphicsPipelineState>(_MRTRootSignature,
-                                                               D3D12_INPUT_LAYOUT_DESC {defaultGeometryInputElements, _countof(defaultGeometryInputElements)});
+                                                                D3D12_INPUT_LAYOUT_DESC {defaultGeometryInputElements, _countof(defaultGeometryInputElements)});
     _mrtPipelineState->SetShaderCode(VSblob, ShaderType::Vertex);
     _mrtPipelineState->SetShaderCode(PSblob, ShaderType::Pixel);
     if (_cmdLineOpts.tessellation)
@@ -915,7 +952,7 @@ void SceneManager::CreateMRTPassPSO()
         _mrtPipelineState->SetShaderCode(HSblob, ShaderType::Hull);
         _mrtPipelineState->SetShaderCode(DSblob, ShaderType::Domain);
     }
-    _mrtPipelineState->SetRenderTargetFormats({DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_SNORM, DXGI_FORMAT_R32_FLOAT});
+    _mrtPipelineState->SetRenderTargetFormats({DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R11G11B10_FLOAT, DXGI_FORMAT_R32_FLOAT});
     _mrtPipelineState->SetDepthStencilFormat(DXGI_FORMAT_D24_UNORM_S8_UINT);
 
     if (_cmdLineOpts.tessellation)
@@ -936,7 +973,7 @@ void SceneManager::CreateLDRPassPSO()
     ShadersUtils::CompileShaderFromFile(squadFileName, ShaderType::Pixel, &PSblob, macro);
 
     _LDRPassState = std::make_unique<GraphicsPipelineState>(_LDRRootSignature,
-                                                           D3D12_INPUT_LAYOUT_DESC {screenQuadInputElements, _countof(screenQuadInputElements)});
+                                                            D3D12_INPUT_LAYOUT_DESC {screenQuadInputElements, _countof(screenQuadInputElements)});
     _LDRPassState->SetShaderCode(VSblob, ShaderType::Vertex);
     _LDRPassState->SetShaderCode(PSblob, ShaderType::Pixel);
     _LDRPassState->SetRenderTargetFormats({DXGI_FORMAT_R8G8B8A8_UNORM_SRGB});

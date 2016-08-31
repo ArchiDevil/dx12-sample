@@ -201,7 +201,8 @@ PS_OUT ps_main(
     float4 diffuseSample = float4(0.75f, 0.75f, 0.75f, 1.0f);
 #endif
     output.diffuse = diffuseSample;
-    output.normals = float4(normalize(input.normal), 1.0f);
+    // normals packing from [-1; 1] to [0; 1] because R11G11B10_FLOAT format does not contain sign bit
+    output.normals = float4((normalize(input.normal) + 1.0) / 2.0, 1.0f);
     output.depth = input.position.z;
     return output;
 }

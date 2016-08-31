@@ -300,8 +300,12 @@ void DX12Sample::CreateTextures()
         _texture[4]->SetName(L"BC6u");
         textureUploadBuffer[4].Attach(pTex_bc6_upload);
         texturesHeapHandle.ptr += CbvSrvUavHeapIncSize;
+    }
 
+    {
         // BC6S texture
+        ID3D12Resource * pTex_bc6 = nullptr;
+        ID3D12Resource * pTex_bc6_upload = nullptr;
         ThrowIfFailed(CreateDDSTextureFromFile(_device.Get(), L"Assets/Textures/tex_bc6s.dds", 1024, true, &pTex_bc6, pCmdList, &pTex_bc6_upload, texturesHeapHandle));
         assert(pTex_bc6 && pTex_bc6_upload);
         _texture[5].Attach(pTex_bc6);
@@ -366,60 +370,18 @@ void DX12Sample::CreateTextures()
     }
 
     {
-        // *** TEX1 *** - 2D mips array
-        textureResourceDesc.Width = (UINT)textureWidth;
-        textureResourceDesc.Height = (UINT)textureHeight;
-        textureResourceDesc.MipLevels = (UINT16)mipsCount;
-        textureResourceDesc.DepthOrArraySize = (UINT16)textureSlices;
-
-        ThrowIfFailed(_device->CreateCommittedResource(&defaultHeapProp,
-                                                       D3D12_HEAP_FLAG_NONE,
-                                                       &textureResourceDesc,
-                                                       D3D12_RESOURCE_STATE_COPY_DEST,
-                                                       nullptr,
-                                                       IID_PPV_ARGS(&_texture[1])));
-
-        uploadBufferSize = GetRequiredIntermediateSize(_texture[1].Get(),
-                                                       0,
-                                                       (UINT)imagesGenerated);
-
-        // Create the GPU upload buffer
-        uploadBufferDesc.Width = uploadBufferSize;
-        ThrowIfFailed(_device->CreateCommittedResource(&uploadHeapProp,
-                                                       D3D12_HEAP_FLAG_NONE,
-                                                       &uploadBufferDesc,
-                                                       D3D12_RESOURCE_STATE_GENERIC_READ,
-                                                       nullptr,
-                                                       IID_PPV_ARGS(&textureUploadBuffer[1])));
-
-        UpdateSubresources(pCmdList,
-                           _texture[1].Get(),
-                           textureUploadBuffer[1].Get(),
-                           0,
-                           0,
-                           (UINT)imagesGenerated,
-                           textureMips.data());
-
-        // Add barrier to upload texture
-        pCmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(_texture[1].Get(),
-                                                                           D3D12_RESOURCE_STATE_COPY_DEST,
-                                                                           D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
-
-        // Now we need to prepare SRV for Texture
-        textureSRVDesc.Format = textureResourceDesc.Format;
-        textureSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
-        textureSRVDesc.Texture2DArray.MipLevels = (UINT16)mipsCount;
-        textureSRVDesc.Texture2DArray.MostDetailedMip = 0;
-        textureSRVDesc.Texture2DArray.ArraySize = (UINT)textureSlices;
-
-        _texture[1]->SetName(L"TEXTURE2D ARRAY with mips");
-
-        _device->CreateShaderResourceView(_texture[1].Get(), &textureSRVDesc, texturesHeapHandle);
+        // *** TEX1 *** - CubeMap with mips
+        ID3D12Resource * pTex = nullptr;
+        ID3D12Resource * pTex_upload = nullptr;
+        ThrowIfFailed(CreateDDSTextureFromFile(_device.Get(), L"assets/textures/ibl_cubemap.dds", 1024, true, &pTex, pCmdList, &pTex_upload, texturesHeapHandle));
+        _texture[1].Attach(pTex);
+        _texture[1]->SetName(L"CUBEMAP with mips");
+        textureUploadBuffer[1].Attach(pTex_upload);
         texturesHeapHandle.ptr += CbvSrvUavHeapIncSize;
     }
 
     {
-        // *** TEX2 *** - CubeMap mips array
+        // *** TEX2 *** - 2D mips array
         textureResourceDesc.Width = (UINT)textureWidth;
         textureResourceDesc.Height = (UINT)textureHeight;
         textureResourceDesc.MipLevels = (UINT16)mipsCount;
@@ -460,12 +422,12 @@ void DX12Sample::CreateTextures()
 
         // Now we need to prepare SRV for Texture
         textureSRVDesc.Format = textureResourceDesc.Format;
-        textureSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBEARRAY;
-        textureSRVDesc.TextureCubeArray.MipLevels = (UINT16)mipsCount;
-        textureSRVDesc.TextureCubeArray.MostDetailedMip = 0;
-        textureSRVDesc.TextureCubeArray.NumCubes = (UINT)textureSlices / 6;
+        textureSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+        textureSRVDesc.Texture2DArray.MipLevels = (UINT16)mipsCount;
+        textureSRVDesc.Texture2DArray.MostDetailedMip = 0;
+        textureSRVDesc.Texture2DArray.ArraySize = (UINT)textureSlices;
 
-        _texture[2]->SetName(L"CUBEMAP ARRAY with mips");
+        _texture[2]->SetName(L"TEXTURE2D ARRAY with mips");
 
         _device->CreateShaderResourceView(_texture[2].Get(), &textureSRVDesc, texturesHeapHandle);
         texturesHeapHandle.ptr += CbvSrvUavHeapIncSize;
@@ -647,5 +609,5 @@ void DX12Sample::CreateObjects()
 
     _plane = _sceneManager->CreatePlane();
     _plane->Position({0.0f, -(float)_objectsInRow, 0.0f});
-    _plane->Scale({_objectsInRow*_objectsInRow, 1.0f, _objectsInRow*_objectsInRow});
+    _plane->Scale({_objectsInRow * _objectsInRow * 2, 1.0f, _objectsInRow * _objectsInRow * 2});
 }
