@@ -22,8 +22,10 @@
 #include <mutex>
 #include <fstream>
 #include <thread>
+#include <atomic>
 
 #include <3rdparty/d3dx12.h>
+#include <3rdparty/DDSTextureLoader.h>
 #include <utils/DXSampleHelper.h>
 
 using namespace DirectX;

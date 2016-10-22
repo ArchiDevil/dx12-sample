@@ -203,6 +203,29 @@ void SceneManager::SetTextures(ComPtr<ID3D12Resource> pTexture[6])
         this->_texture[i] = pTexture[i];
 }
 
+void SceneManager::SetBackgroundCubemap(const std::wstring& name)
+{
+    ComPtr<ID3D12Resource> textureUploadBuffer;
+
+    CommandList uploadCommandList {CommandListType::Direct, _device};
+    ID3D12GraphicsCommandList *pCmdList = uploadCommandList.GetInternal().Get();
+
+    UINT incrementSize = _device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = _customsHeap->GetCPUDescriptorHandleForHeapStart();
+    cpuHandle.ptr += incrementSize * (_cmdLineOpts.shadow_pass ? 7 : 6);
+
+    ID3D12Resource * pTex = nullptr;
+    ID3D12Resource * pTex_upload = nullptr;
+
+    ThrowIfFailed(CreateDDSTextureFromFile(_device.Get(), name.c_str(), 1024, true, &pTex, pCmdList, &pTex_upload, cpuHandle));
+    _backgroundTexture.Attach(pTex);
+    _backgroundTexture->SetName(L"Background cubemap with mips");
+    textureUploadBuffer.Attach(pTex_upload);
+
+    uploadCommandList.Close();
+    ExecuteCommandLists(uploadCommandList);
+}
+
 SceneManager::SceneObjectPtr SceneManager::CreateFilledCube()
 {
     ComPtr<ID3D12PipelineState> pipelineState = _cmdLineOpts.bundles ? _mrtPipelineState->GetPSO() : nullptr;
@@ -340,12 +363,9 @@ void SceneManager::PopulateWorkerCommandLists()
     if (_cmdLineOpts.threads)
     {
         // wake up worker threads
-        {
-            std::unique_lock<std::mutex> lock(_workerMutex);
-            _drawObjectIndex = 0;
-            _pendingWorkers = _threadPool.size();
-            _workerBeginCV.notify_all();
-        }
+        _drawObjectIndex = 0;
+        _pendingWorkers = _threadPool.size();
+        _workerBeginCV.notify_all();
 
         // wait until all work is completed
         {
@@ -377,10 +397,6 @@ void SceneManager::PopulateLightPassCommandList()
     PIXBeginEvent(pCmdList, 0, "Light rendering");
     pCmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-    // Set sampler heap.
-    ID3D12DescriptorHeap* ppHeaps[] = {_customsHeap.Get()};
-    pCmdList->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
-
     D3D12_RECT scissor = {0, 0, (LONG)_screenWidth, (LONG)_screenHeight};
     pCmdList->RSSetScissorRects(1, &scissor);
 
@@ -406,14 +422,14 @@ void SceneManager::PopulateLightPassCommandList()
 
     pCmdList->SetGraphicsRootSignature(_lightRootSignature.GetInternal().Get());
 
+    // Set sampler heap.
+    ID3D12DescriptorHeap* ppHeaps[] = {_customsHeap.Get()};
+    pCmdList->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
+
     D3D12_GPU_DESCRIPTOR_HANDLE texHandle = _customsHeap->GetGPUDescriptorHandleForHeapStart();
     pCmdList->SetGraphicsRootDescriptorTable(0, texHandle);
 
-    ppHeaps[0] = _texturesHeap.Get();
-    pCmdList->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
-
-    texHandle = _texturesHeap->GetGPUDescriptorHandleForHeapStart();
-    texHandle.ptr += texHeapIncSize * 3;
+    texHandle.ptr += texHeapIncSize * (_cmdLineOpts.shadow_pass ? 7 : 6);
     pCmdList->SetGraphicsRootDescriptorTable(1, texHandle);
 
     pCmdList->SetGraphicsRootConstantBufferView(2, _cbvSceneParams->GetGPUVirtualAddress());
@@ -495,6 +511,9 @@ void SceneManager::ThreadDrawRoutine(size_t threadId)
     UINT texHeapIncSize = _device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     while (true)
     {
+        if (_workerThreadExit)
+            return; // terminate thread
+
         uint32_t currentObjectIndex = 0;
         if (!_threadPool.empty())
         {
@@ -507,8 +526,6 @@ void SceneManager::ThreadDrawRoutine(size_t threadId)
                 _workerEndCV.notify_one();
 
                 _workerBeginCV.wait(lock);
-                if (_workerThreadExit)
-                    return; // terminate thread
             }
 
             currentObjectIndex = _drawObjectIndex++;
@@ -570,11 +587,7 @@ void SceneManager::ThreadDrawRoutine(size_t threadId)
             }
 
             _objects[currentObjectIndex]->Draw(pThreadCmdList);
-            // increment object count safely
-            {
-                std::unique_lock<std::mutex> lock(_workerMutex);
-                currentObjectIndex = _drawObjectIndex++;
-            }
+            currentObjectIndex = _drawObjectIndex++;
         }
 
         PIXEndEvent(pThreadCmdList.Get());

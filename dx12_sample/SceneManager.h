@@ -34,6 +34,7 @@ public:
     SceneManager& operator=(SceneManager&&) = delete;
 
     void SetTextures(ComPtr<ID3D12Resource> pTexture[6]); // ugly and terrible
+    void SetBackgroundCubemap(const std::wstring& name);
 
     SceneObjectPtr CreateFilledCube();
     SceneObjectPtr CreateOpenedCube();
@@ -109,10 +110,10 @@ private:
     // multithreading objects
     std::condition_variable                     _workerBeginCV {};
     std::condition_variable                     _workerEndCV {};
-    bool                                        _workerThreadExit = false;
-    size_t                                      _pendingWorkers = 0;
+    std::atomic_bool                            _workerThreadExit = false;
+    std::atomic_size_t                          _pendingWorkers = 0;
     std::mutex                                  _workerMutex {};
-    uint32_t                                    _drawObjectIndex = ~0x0;
+    std::atomic_uint32_t                        _drawObjectIndex = ~0x0;
     std::vector<std::thread>                    _threadPool {};
 
     // root signatures
@@ -135,6 +136,7 @@ private:
     UINT                                        _screenWidth = 0;
     UINT                                        _screenHeight = 0;
     std::vector<std::shared_ptr<RenderTarget>>  _swapChainRTs;
+    ComPtr<ID3D12Resource>                      _backgroundTexture;
     ComPtr<ID3D12Resource>                      _texture[6] = {};
     ComPtr<ID3D12Resource>                      _intermediateIntensityBuffer = nullptr;
     ComPtr<ID3D12Resource>                      _finalIntensityBuffer = nullptr;
