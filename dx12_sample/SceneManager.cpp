@@ -273,7 +273,7 @@ void SceneManager::DrawAll()
     _cmdQueue->ExecuteCommandLists((UINT)cmdListArray.size(), cmdListArray.data());
 
     // swap rt buffers.
-    _swapChain->Present(1, 0);
+    _swapChain->Present(0, 0);
     WaitCurrentFrame();
 }
 

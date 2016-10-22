@@ -6,6 +6,8 @@
 #include <utils/Shaders.h>
 #include <utils/FeaturesCollector.h>
 
+using namespace std::chrono;
+
 DX12Sample::DX12Sample(int windowWidth, int windowHeight, std::set<optTypes>& opts)
     : DXSample(windowWidth, windowHeight, L"HELLO YOPTA")
 {
@@ -80,36 +82,39 @@ void DX12Sample::OnInit()
 
 void DX12Sample::OnUpdate()
 {
-    static std::chrono::high_resolution_clock clock;
-    static auto prevTime = clock.now();
-    static int framesCount = 0;
-    std::chrono::milliseconds diff = std::chrono::duration_cast<std::chrono::milliseconds>(clock.now() - prevTime);
-    framesCount++;
-    if (diff.count() > 1000)
+    static auto prevTime = high_resolution_clock::now();
+    static int elapsedFrames = 0;
+    static double elapsedTime = 0.0;
+
+    microseconds diff = duration_cast<microseconds>(high_resolution_clock::now() - prevTime);
+    double dt = (double)diff.count() / 1000000.0;
+
+    prevTime = high_resolution_clock::now();
+    elapsedFrames++;
+    elapsedTime += dt;
+
+    if (elapsedTime > 1.0)
     {
         std::wostringstream ss;
-        ss << "FPS: " << framesCount;
+        ss << "FPS: " << elapsedFrames;
         SetWindowText(m_hwnd, ss.str().c_str());
-        prevTime = clock.now();
-        framesCount = 0;
+        elapsedFrames = 0;
+        elapsedTime -= 1.0;
     }
 
-    static float currentCounter = 0.0f;
-    currentCounter += 0.01f;
+    static double time = 0;
+    time += dt;
 
     for (uint32_t objIndex = 0; objIndex < _drawObjectsCount; ++objIndex)
     {
         auto & object = _objects[objIndex];
-        object->Rotation(currentCounter);
+        object->Rotation((float)time * 0.5f);
     }
-
-    static int time = 0;
-    time++;
 
     {
         auto shadowCamera = _sceneManager->GetShadowCamera();
-        float rotation = time * 0.1f;
-        float inclination = std::sinf(time * 0.01f) * 45.0f;
+        float rotation = (float)time;
+        float inclination = std::sinf((float)time) * 45.0f;
         shadowCamera->SetInclination(inclination);
         shadowCamera->SetRotation(rotation);
     }
@@ -118,7 +123,7 @@ void DX12Sample::OnUpdate()
         auto viewCamera = _sceneManager->GetViewCamera();
         static float inclination = -30.0f, rotation = 0.0f;
         rotation += 0.05f;
-        float radius = (std::sinf(time * 0.005f) + 1.0f) * _objectsInRow / 2 + _objectsInRow;
+        float radius = (std::sinf((float)time * 0.5f) + 1.0f) * _objectsInRow / 2 + _objectsInRow;
         viewCamera->SetInclination(inclination);
         viewCamera->SetRotation(rotation);
         viewCamera->SetRadius(radius);
