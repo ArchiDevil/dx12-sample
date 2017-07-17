@@ -40,9 +40,9 @@ private:
 #ifdef _DEBUG
     static constexpr size_t                     _objectsInRow = 5;
 #else
-    static constexpr size_t                     _objectsInRow = 15;
+    static constexpr size_t                     _objectsInRow = 10;
 #endif
-    static constexpr float                      _objDistance = 1.5f;
+    static constexpr float                      _objDistance = 1.0f;
     static constexpr size_t                     _drawObjectsCount = _objectsInRow * _objectsInRow * _objectsInRow;
     static constexpr size_t                     _swapChainBuffersCount = 2;
 

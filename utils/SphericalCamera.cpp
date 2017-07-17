@@ -86,6 +86,6 @@ void SphericalCamera::UpdateMatrices()
     else if (_type == ProjectionType::Orthographic)
         _projectionMatrix = XMMatrixOrthographicLH(_screenWidth, _screenHeight, _zNear, _zFar);
 
-    _viewMatrix = XMMatrixLookAtLH(m, {_centerPosition.x, _centerPosition.y, _centerPosition.z, 1.0}, {0.0, 1.0, 0.0, 1.0});
+    _viewMatrix = XMMatrixLookAtLH(m, {_centerPosition.x, _centerPosition.y, _centerPosition.z, 1.0}, {0.0, 1.0, 0.0, 0.0});
 }
 }
