@@ -23,6 +23,7 @@
 #include <fstream>
 #include <thread>
 #include <atomic>
+#include <array>
 
 #include <3rdparty/d3dx12.h>
 #include <3rdparty/DDSTextureLoader.h>
