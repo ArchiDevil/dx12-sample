@@ -56,5 +56,5 @@ private:
     std::shared_ptr<SceneObject>                _plane = nullptr;
 
     ComPtr<ID3D12DescriptorHeap>                _texturesHeap = nullptr;
-    ComPtr<ID3D12Resource>                      _texture[6] = {};
+    std::array<ComPtr<ID3D12Resource>, 6>       _texture = {};
 };

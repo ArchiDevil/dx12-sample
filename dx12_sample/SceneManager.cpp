@@ -197,10 +197,9 @@ SceneManager::~SceneManager()
     WaitCurrentFrame();
 }
 
-void SceneManager::SetTextures(ComPtr<ID3D12Resource> pTexture[6])
+void SceneManager::SetTextures(std::array<ComPtr<ID3D12Resource>, 6> textures)
 {
-    for (size_t i = 0; i < countof(this->_texture); ++i)
-        this->_texture[i] = pTexture[i];
+    this->_texture = textures;
 }
 
 void SceneManager::SetBackgroundCubemap(const std::wstring& name)
@@ -279,8 +278,8 @@ void SceneManager::DrawAll()
 
 void SceneManager::ExecuteCommandLists(const CommandList & commandList)
 {
-    ID3D12CommandList* cmdListsArray[] = {commandList.GetInternal().Get()};
-    _cmdQueue->ExecuteCommandLists((UINT)countof(cmdListsArray), cmdListsArray);
+    std::array<ID3D12CommandList*, 1> cmdListsArray = {commandList.GetInternal().Get()};
+    _cmdQueue->ExecuteCommandLists((UINT)cmdListsArray.size(), cmdListsArray.data());
 
     _fenceValue++;
     WaitCurrentFrame();
@@ -304,13 +303,13 @@ void SceneManager::PopulateClearPassCommandList()
 
     PIXBeginEvent(pCmdList, 0, "Render targets clear");
 
-    D3D12_RESOURCE_BARRIER barriers[] = {
+    std::array<D3D12_RESOURCE_BARRIER, 3> barriers = {
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[0]->_texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[1]->_texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[2]->_texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
     };
 
-    pCmdList->ResourceBarrier((UINT)countof(barriers), barriers);
+    pCmdList->ResourceBarrier((UINT)barriers.size(), barriers.data());
 
     RenderTarget* rts[8] = {_mrtRts[0].get(), _mrtRts[1].get(), _mrtRts[2].get()};
     // is not necessary, but just for test
@@ -409,13 +408,13 @@ void SceneManager::PopulateLightPassCommandList()
     _rtManager->BindRenderTargets(rts, nullptr, *_lightPassCmdList);
     _rtManager->ClearRenderTarget(*rts[0], *_lightPassCmdList);
 
-    D3D12_RESOURCE_BARRIER barriers[] = {
+    std::array<D3D12_RESOURCE_BARRIER, 3> barriers = {
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[0]->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[1]->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[2]->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
     };
 
-    pCmdList->ResourceBarrier((UINT)countof(barriers), barriers);
+    pCmdList->ResourceBarrier((UINT)barriers.size(), barriers.data());
 
     if (_cmdLineOpts.shadow_pass)
         pCmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(_shadowDepth->_texture.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
@@ -622,7 +621,7 @@ void SceneManager::CreateRenderTargets()
         _shadowDepth = _rtManager->CreateDepthStencil(depthMapSize, depthMapSize, DXGI_FORMAT_R24G8_TYPELESS, DXGI_FORMAT_D24_UNORM_S8_UINT, L"ShadowPassDepthRT");
 
     // move resources into correct states to avoid DXDebug errors on first barrier calls
-    D3D12_RESOURCE_BARRIER barriers[] = {
+    std::array<D3D12_RESOURCE_BARRIER, 5> barriers = {
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[0]->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[1]->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[2]->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
@@ -631,7 +630,7 @@ void SceneManager::CreateRenderTargets()
     };
 
     CommandList temporaryCmdList {CommandListType::Direct, _device};
-    temporaryCmdList.GetInternal()->ResourceBarrier((UINT)countof(barriers), barriers);
+    temporaryCmdList.GetInternal()->ResourceBarrier((UINT)barriers.size(), barriers.data());
     temporaryCmdList.Close();
 
     ExecuteCommandLists(temporaryCmdList);
@@ -679,8 +678,8 @@ void SceneManager::FinishWorkerThreads()
         _workerBeginCV.notify_all();
     }
 
-    for (uint32_t tid = 0; tid < _threadPool.size(); ++tid)
-        _threadPool[tid].join();
+    for (auto & tid : _threadPool)
+        tid.join();
 }
 
 void SceneManager::CreateConstantBuffer(size_t bufferSize, ComPtr<ID3D12Resource> * pOutBuffer)
@@ -1025,6 +1024,8 @@ void SceneManager::FillViewProjMatrix()
 void SceneManager::FillSceneProperties()
 {
     assert(_cbvScene);
+    if (!_cbvScene)
+        return;
 
     XMFLOAT4 lightPos = _shadowCamera.GetEyePosition();
     XMFLOAT3 ambientColor = {0.2f, 0.2f, 0.2f};

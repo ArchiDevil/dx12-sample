@@ -33,7 +33,7 @@ public:
     SceneManager& operator=(const SceneManager&) = delete;
     SceneManager& operator=(SceneManager&&) = delete;
 
-    void SetTextures(ComPtr<ID3D12Resource> pTexture[6]); // ugly and terrible
+    void SetTextures(std::array<ComPtr<ID3D12Resource>, 6> textures); // ugly and terrible
     void SetBackgroundCubemap(const std::wstring& name);
 
     SceneObjectPtr CreateFilledCube();
@@ -137,7 +137,7 @@ private:
     UINT                                        _screenHeight = 0;
     std::vector<std::shared_ptr<RenderTarget>>  _swapChainRTs;
     ComPtr<ID3D12Resource>                      _backgroundTexture;
-    ComPtr<ID3D12Resource>                      _texture[6] = {};
+    std::array<ComPtr<ID3D12Resource>, 6>       _texture = {};
     ComPtr<ID3D12Resource>                      _intermediateIntensityBuffer = nullptr;
     ComPtr<ID3D12Resource>                      _finalIntensityBuffer = nullptr;
     Graphics::SphericalCamera                   _viewCamera;
@@ -146,7 +146,7 @@ private:
     ComPtr<ID3D12DescriptorHeap>                _texturesHeap = nullptr;
     ComPtr<ID3D12DescriptorHeap>                _customsHeap = nullptr;
 
-    std::shared_ptr<RenderTarget>               _mrtRts[3]; // diffuse, normals, depth
+    std::array<std::shared_ptr<RenderTarget>, 3>_mrtRts; // diffuse, normals, depth
     std::shared_ptr<RenderTarget>               _HDRRt;
     std::shared_ptr<DepthStencil>               _mrtDepth;
     std::shared_ptr<DepthStencil>               _shadowDepth;
