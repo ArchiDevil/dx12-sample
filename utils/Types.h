@@ -74,9 +74,3 @@ struct CommandLineOptions
     bool tessellation = false;
     bool legacy_swapchain = false;
 };
-
-template<typename T, size_t N>
-constexpr size_t countof(T(&arr)[N])
-{
-    return N;
-}

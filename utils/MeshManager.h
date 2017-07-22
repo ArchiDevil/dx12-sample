@@ -40,7 +40,6 @@ class MeshManager
 {
 public:
     MeshManager(bool tessellationEnabled, ComPtr<ID3D12Device> device);
-    ~MeshManager();
 
     std::shared_ptr<MeshObject> LoadMesh(const std::string& filename);
     std::shared_ptr<MeshObject> CreateCube();

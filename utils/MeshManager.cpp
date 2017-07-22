@@ -181,10 +181,6 @@ MeshManager::MeshManager(bool tessellationEnabled, ComPtr<ID3D12Device> device)
 {
 }
 
-MeshManager::~MeshManager()
-{
-}
-
 std::shared_ptr<MeshObject> MeshManager::LoadMesh(const std::string& filename)
 {
     throw std::runtime_error("Not implemented yet");

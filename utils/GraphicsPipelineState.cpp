@@ -67,7 +67,7 @@ void GraphicsPipelineState::SetDepthStencilState(const D3D12_DEPTH_STENCIL_DESC 
 
 void GraphicsPipelineState::SetRenderTargetFormats(const std::initializer_list<DXGI_FORMAT> & list)
 {
-    assert(list.size() < countof(_description.RTVFormats));
+    assert(list.size() < std::size(_description.RTVFormats));
     _description.NumRenderTargets = (UINT)list.size();
     std::copy(list.begin(), list.end(), _description.RTVFormats);
 }
