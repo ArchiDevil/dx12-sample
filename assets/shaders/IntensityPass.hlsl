@@ -56,7 +56,7 @@ void cs_main(uint3 ThreadID : SV_GroupThreadID,
             MaxImageLuminance = max(LineIntensityBuffer[i].MaxLuminance, MaxImageLuminance);
         }
 
-        IntensityOut[0].AverageLuminance = exp(1 / (Width * Height) * OverallLuminance);
+        IntensityOut[0].AverageLuminance = exp(1.0 / (Width * Height) * OverallLuminance);
         // maximum luminance is clamped due to enforcing color burning with Reinhard-operator model
         IntensityOut[0].MaxLuminance = clamp(MaxImageLuminance, 0.4, 1.2);
     }
