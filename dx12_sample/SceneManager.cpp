@@ -5,6 +5,8 @@
 #include <utils/RenderTargetManager.h>
 #include <utils/Shaders.h>
 
+#include <processthreadsapi.h>
+
 constexpr float clearColor[] = {0.0f, 0.4f, 0.7f, 1.0f};
 constexpr int depthMapSize = 2048;
 
@@ -72,6 +74,8 @@ SceneManager::SceneManager(ComPtr<ID3D12Device> pDevice,
 
     _shadowCamera.SetCenter({0.0f, 0.0f, 0.0f});
     _shadowCamera.SetRadius(objectOnSceneInRow * 2.0f);
+
+    SetThreadDescription(GetCurrentThread(), L"Main thread");
 
     if (cmdLineOpts.threads)
     {
@@ -506,6 +510,9 @@ void SceneManager::WaitCurrentFrame()
 
 void SceneManager::ThreadDrawRoutine(size_t threadId)
 {
+    if (!_threadPool.empty())
+        SetThreadDescription(GetCurrentThread(), L"Render thread");
+
     UINT rtvHeapIncSize = _device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     UINT texHeapIncSize = _device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     while (true)
@@ -525,6 +532,9 @@ void SceneManager::ThreadDrawRoutine(size_t threadId)
                 _workerEndCV.notify_one();
 
                 _workerBeginCV.wait(lock);
+
+                if (_workerThreadExit)
+                    return; // terminate thread
             }
 
             currentObjectIndex = _drawObjectIndex++;
