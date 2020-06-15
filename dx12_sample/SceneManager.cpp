@@ -5,8 +5,6 @@
 #include <utils/RenderTargetManager.h>
 #include <utils/Shaders.h>
 
-#include <processthreadsapi.h>
-
 constexpr float clearColor[] = {0.0f, 0.4f, 0.7f, 1.0f};
 constexpr int depthMapSize = 2048;
 
@@ -67,6 +65,8 @@ SceneManager::SceneManager(ComPtr<ID3D12Device> pDevice,
     assert(pSwapChain);
     assert(rtManager);
 
+    SetThreadDescription(GetCurrentThread(), L"Main thread");
+
     _meshManager.reset(new MeshManager(cmdLineOpts.tessellation, pDevice));
 
     _viewCamera.SetCenter({0.0f, 0.0f, 0.0f});
@@ -74,8 +74,6 @@ SceneManager::SceneManager(ComPtr<ID3D12Device> pDevice,
 
     _shadowCamera.SetCenter({0.0f, 0.0f, 0.0f});
     _shadowCamera.SetRadius(objectOnSceneInRow * 2.0f);
-
-    SetThreadDescription(GetCurrentThread(), L"Main thread");
 
     if (cmdLineOpts.threads)
     {
@@ -212,6 +210,7 @@ void SceneManager::SetBackgroundCubemap(const std::wstring& name)
 
     CommandList uploadCommandList {CommandListType::Direct, _device};
     ID3D12GraphicsCommandList *pCmdList = uploadCommandList.GetInternal().Get();
+    PIXSetMarker(pCmdList, 0, "Somewhere in the depths");
 
     UINT incrementSize = _device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = _customsHeap->GetCPUDescriptorHandleForHeapStart();
@@ -226,7 +225,9 @@ void SceneManager::SetBackgroundCubemap(const std::wstring& name)
     textureUploadBuffer.Attach(pTex_upload);
 
     uploadCommandList.Close();
+    PIXBeginEvent(_cmdQueue.Get(), PIX_COLOR(255, 0, 0), "Cubemap filling");
     ExecuteCommandLists(uploadCommandList);
+    PIXEndEvent(_cmdQueue.Get());
 }
 
 SceneManager::SceneObjectPtr SceneManager::CreateFilledCube()
@@ -259,21 +260,30 @@ void SceneManager::DrawAll()
     if (_cmdLineOpts.shadow_pass)
         PopulateDepthPassCommandList();
 
-    PopulateWorkerCommandLists();
-    PopulateLightPassCommandList();
-
     std::vector<ID3D12CommandList*> cmdListArray;
     cmdListArray.reserve(_workerCmdLists.size() + 3);
 
     cmdListArray.push_back(_clearPassCmdList->GetInternal().Get());
     if (_cmdLineOpts.shadow_pass)
         cmdListArray.push_back(_depthPassCmdList->GetInternal().Get());
+    PIXBeginEvent(_cmdQueue.Get(), 0, "Clear & shadows");
+    _cmdQueue->ExecuteCommandLists(_cmdLineOpts.shadow_pass ? 2 : 1, cmdListArray.data());
+    PIXEndEvent(_cmdQueue.Get());
 
+    cmdListArray.clear();
+    PopulateWorkerCommandLists();
     for (auto &pWorkList : _workerCmdLists)
         cmdListArray.push_back(pWorkList->GetInternal().Get());
-    cmdListArray.push_back(_lightPassCmdList->GetInternal().Get());
+    PIXBeginEvent(_cmdQueue.Get(), 0, "G-buffer");
+    _cmdQueue->ExecuteCommandLists((UINT)_workerCmdLists.size(), cmdListArray.data());
+    PIXEndEvent(_cmdQueue.Get());
 
-    _cmdQueue->ExecuteCommandLists((UINT)cmdListArray.size(), cmdListArray.data());
+    cmdListArray.clear();
+    PopulateLightPassCommandList();
+    cmdListArray.push_back(_lightPassCmdList->GetInternal().Get());
+    PIXBeginEvent(_cmdQueue.Get(), 0, "Lighting pass");
+    _cmdQueue->ExecuteCommandLists(1, cmdListArray.data());
+    PIXEndEvent(_cmdQueue.Get());
 
     // swap rt buffers.
     _swapChain->Present(0, 0);
@@ -283,7 +293,9 @@ void SceneManager::DrawAll()
 void SceneManager::ExecuteCommandLists(const CommandList & commandList)
 {
     std::array<ID3D12CommandList*, 1> cmdListsArray = {commandList.GetInternal().Get()};
+    PIXBeginEvent(_cmdQueue.Get(), 0, "Submitting");
     _cmdQueue->ExecuteCommandLists((UINT)cmdListsArray.size(), cmdListsArray.data());
+    PIXEndEvent(_cmdQueue.Get());
 
     _fenceValue++;
     WaitCurrentFrame();
@@ -494,6 +506,7 @@ void SceneManager::PopulateLightPassCommandList()
 
 void SceneManager::WaitCurrentFrame()
 {
+    PIXBeginEvent(_cmdQueue.Get(), 0, "Waiting for a fence");
     uint64_t newFenceValue = _fenceValue;
 
     ThrowIfFailed(_cmdQueue->Signal(_frameFence.Get(), newFenceValue));
@@ -506,6 +519,7 @@ void SceneManager::WaitCurrentFrame()
     }
 
     _frameIndex = _swapChain->GetCurrentBackBufferIndex();
+    PIXEndEvent(_cmdQueue.Get());
 }
 
 void SceneManager::ThreadDrawRoutine(size_t threadId)

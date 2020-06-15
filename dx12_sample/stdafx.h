@@ -10,7 +10,8 @@
 #include <dxgi1_4.h>
 #include <D3Dcompiler.h>
 #include <DirectXMath.h>
-#include <pix_win.h>
+#include <WinPixEventRuntime/pix3.h>
+#include <processthreadsapi.h>
 
 #include <string>
 #include <chrono>
