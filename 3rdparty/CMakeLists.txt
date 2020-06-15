@@ -6,8 +6,6 @@ set(SRC
     PlatformHelpers.h
     )
 
-add_definitions(-DUNICODE -D_UNICODE)
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd")
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
-
 add_library(3rdparty STATIC ${SRC})
+
+add_subdirectory(winpixeventruntime.1.0.200127001)
