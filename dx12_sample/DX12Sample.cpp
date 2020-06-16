@@ -494,7 +494,6 @@ void DX12Sample::CreateTextures()
 
     uploadCommandList.Close();
     _sceneManager->ExecuteCommandLists(uploadCommandList);
-    _sceneManager->SetTextures(_texture);
     _sceneManager->SetBackgroundCubemap(L"assets/textures/ibl_cubemap.dds");
 }
 

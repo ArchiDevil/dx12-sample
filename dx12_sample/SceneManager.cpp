@@ -199,11 +199,6 @@ SceneManager::~SceneManager()
     WaitCurrentFrame();
 }
 
-void SceneManager::SetTextures(std::array<ComPtr<ID3D12Resource>, 6> textures)
-{
-    this->_texture = textures;
-}
-
 void SceneManager::SetBackgroundCubemap(const std::wstring& name)
 {
     ComPtr<ID3D12Resource> textureUploadBuffer;

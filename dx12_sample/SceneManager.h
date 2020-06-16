@@ -33,7 +33,6 @@ public:
     SceneManager& operator=(const SceneManager&) = delete;
     SceneManager& operator=(SceneManager&&) = delete;
 
-    void SetTextures(std::array<ComPtr<ID3D12Resource>, 6> textures); // ugly and terrible
     void SetBackgroundCubemap(const std::wstring& name);
 
     SceneObjectPtr CreateFilledCube();
@@ -137,7 +136,6 @@ private:
     UINT                                        _screenHeight = 0;
     std::vector<std::shared_ptr<RenderTarget>>  _swapChainRTs;
     ComPtr<ID3D12Resource>                      _backgroundTexture;
-    std::array<ComPtr<ID3D12Resource>, 6>       _texture = {};
     ComPtr<ID3D12Resource>                      _intermediateIntensityBuffer = nullptr;
     ComPtr<ID3D12Resource>                      _finalIntensityBuffer = nullptr;
     Graphics::SphericalCamera                   _viewCamera;
