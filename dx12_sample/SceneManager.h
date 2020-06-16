@@ -148,6 +148,7 @@ private:
     std::shared_ptr<RenderTarget>               _HDRRt;
     std::shared_ptr<DepthStencil>               _mrtDepth;
     std::shared_ptr<DepthStencil>               _shadowDepth;
+    bool                                        _isFrameWaiting = false;
 
     void CreateIntensityPassPSO();
     void CreateIntensityPassRootSignature();

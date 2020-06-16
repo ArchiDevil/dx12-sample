@@ -4,8 +4,6 @@
 
 #include "Math.h"
 
-#define M_PI 3.14159265f
-
 namespace Graphics
 {
 SphericalCamera::SphericalCamera(ProjectionType type)

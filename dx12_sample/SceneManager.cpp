@@ -5,6 +5,8 @@
 #include <utils/RenderTargetManager.h>
 #include <utils/Shaders.h>
 
+#include <random>
+
 constexpr float clearColor[] = {0.0f, 0.4f, 0.7f, 1.0f};
 constexpr int depthMapSize = 2048;
 
@@ -25,7 +27,15 @@ D3D12_INPUT_ELEMENT_DESC screenQuadInputElements[] =
     {"TEXCOORD",  0, DXGI_FORMAT_R32G32_FLOAT,    0,  8, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
 };
 
-#define M_PI 3.14159265f
+constexpr auto pi = 3.14159265f;
+
+unsigned GetRandomNumber(unsigned min, unsigned max)
+{
+    std::random_device r;
+    std::default_random_engine e1(r());
+    std::uniform_int_distribution<unsigned> uniform_dist(min, max);
+    return uniform_dist(e1);
+}
 
 SceneManager::SceneManager(ComPtr<ID3D12Device> pDevice,
                            UINT screenWidth,
@@ -49,13 +59,13 @@ SceneManager::SceneManager(ComPtr<ID3D12Device> pDevice,
     , _viewCamera(Graphics::ProjectionType::Perspective,
                   0.1f,
                   objectOnSceneInRow * 5.0f,
-                  5.0f * M_PI / 18.0f,
+                  5.0f * pi / 18.0f,
                   static_cast<float>(screenWidth),
                   static_cast<float>(screenHeight))
     , _shadowCamera(Graphics::ProjectionType::Perspective,
                     1.0f,
                     objectOnSceneInRow * 5.0f,
-                    9.0f * M_PI / 18.0f,
+                    9.0f * pi / 18.0f,
                     depthMapSize / depthMapSize * objectOnSceneInRow * 3.0f,
                     depthMapSize / depthMapSize * objectOnSceneInRow * 3.0f)
 {
@@ -220,9 +230,11 @@ void SceneManager::SetBackgroundCubemap(const std::wstring& name)
     textureUploadBuffer.Attach(pTex_upload);
 
     uploadCommandList.Close();
-    PIXBeginEvent(_cmdQueue.Get(), PIX_COLOR(255, 0, 0), "Cubemap filling");
-    ExecuteCommandLists(uploadCommandList);
-    PIXEndEvent(_cmdQueue.Get());
+    
+    {
+        PIXScopedEvent(_cmdQueue.Get(), PIX_COLOR(255, 0, 0), "Cubemap filling");
+        ExecuteCommandLists(uploadCommandList);
+    }
 }
 
 SceneManager::SceneObjectPtr SceneManager::CreateFilledCube()
@@ -249,48 +261,65 @@ SceneManager::SceneObjectPtr SceneManager::CreatePlane()
 
 void SceneManager::DrawAll()
 {
+    if (_isFrameWaiting && GetRandomNumber(1, 100) > 75)
+    {
+        _isFrameWaiting = false;
+        PIXEndEvent(_cmdQueue.Get());
+    }
+    else if (!_isFrameWaiting && GetRandomNumber(1, 100) > 75)
+    {
+        _isFrameWaiting = true;
+        PIXBeginEvent(_cmdQueue.Get(), PIX_COLOR(0, 0, 255), "Multiframe random region");
+    }
+
+    std::vector<ID3D12CommandList*> cmdListArray;
+    cmdListArray.reserve(16); // just to avoid any allocations
+
     FillViewProjMatrix();
     FillSceneProperties();
 
-    if (_cmdLineOpts.shadow_pass)
-        PopulateDepthPassCommandList();
+    // Clear and shadow pass (if enabled)
+    {
+        PIXScopedEvent(_cmdQueue.Get(), PIX_COLOR(0, 0, 0), "Clear & shadows");
+        if (_cmdLineOpts.shadow_pass)
+            PopulateDepthPassCommandList();
+        cmdListArray.push_back(_clearPassCmdList->GetInternal().Get());
+        if (_cmdLineOpts.shadow_pass)
+            cmdListArray.push_back(_depthPassCmdList->GetInternal().Get());
+        _cmdQueue->ExecuteCommandLists(_cmdLineOpts.shadow_pass ? 2 : 1, cmdListArray.data());
+    }
 
-    std::vector<ID3D12CommandList*> cmdListArray;
-    cmdListArray.reserve(_workerCmdLists.size() + 3);
+    // G-buffer pass
+    {
+        PIXScopedEvent(_cmdQueue.Get(), PIX_COLOR(0, 255, 0), "G-buffer");
+        cmdListArray.clear();
+        PopulateWorkerCommandLists();
+        for (auto& pWorkList : _workerCmdLists)
+            cmdListArray.push_back(pWorkList->GetInternal().Get());
+        _cmdQueue->ExecuteCommandLists((UINT)_workerCmdLists.size(), cmdListArray.data());
+    }
 
-    cmdListArray.push_back(_clearPassCmdList->GetInternal().Get());
-    if (_cmdLineOpts.shadow_pass)
-        cmdListArray.push_back(_depthPassCmdList->GetInternal().Get());
-    PIXBeginEvent(_cmdQueue.Get(), 0, "Clear & shadows");
-    _cmdQueue->ExecuteCommandLists(_cmdLineOpts.shadow_pass ? 2 : 1, cmdListArray.data());
-    PIXEndEvent(_cmdQueue.Get());
+    // Lighting and post-processing
+    {
+        PIXScopedEvent(_cmdQueue.Get(), PIX_COLOR(255, 255, 255), "Lighting and post-process");
+        cmdListArray.clear();
+        PopulateLightPassCommandList();
+        cmdListArray.push_back(_lightPassCmdList->GetInternal().Get());
+        _cmdQueue->ExecuteCommandLists(1, cmdListArray.data());
+    }
 
-    cmdListArray.clear();
-    PopulateWorkerCommandLists();
-    for (auto &pWorkList : _workerCmdLists)
-        cmdListArray.push_back(pWorkList->GetInternal().Get());
-    PIXBeginEvent(_cmdQueue.Get(), 0, "G-buffer");
-    _cmdQueue->ExecuteCommandLists((UINT)_workerCmdLists.size(), cmdListArray.data());
-    PIXEndEvent(_cmdQueue.Get());
-
-    cmdListArray.clear();
-    PopulateLightPassCommandList();
-    cmdListArray.push_back(_lightPassCmdList->GetInternal().Get());
-    PIXBeginEvent(_cmdQueue.Get(), 0, "Lighting pass");
-    _cmdQueue->ExecuteCommandLists(1, cmdListArray.data());
-    PIXEndEvent(_cmdQueue.Get());
-
-    // swap rt buffers.
+    // Swap buffers
     _swapChain->Present(0, 0);
     WaitCurrentFrame();
 }
 
 void SceneManager::ExecuteCommandLists(const CommandList & commandList)
 {
-    std::array<ID3D12CommandList*, 1> cmdListsArray = {commandList.GetInternal().Get()};
-    PIXBeginEvent(_cmdQueue.Get(), 0, "Submitting");
-    _cmdQueue->ExecuteCommandLists((UINT)cmdListsArray.size(), cmdListsArray.data());
-    PIXEndEvent(_cmdQueue.Get());
+    {
+        PIXScopedEvent(_cmdQueue.Get(), 0, "Submitting");
+        std::array<ID3D12CommandList*, 1> cmdListsArray = { commandList.GetInternal().Get() };
+        _cmdQueue->ExecuteCommandLists((UINT)cmdListsArray.size(), cmdListsArray.data());
+    }
 
     _fenceValue++;
     WaitCurrentFrame();
@@ -314,7 +343,7 @@ void SceneManager::PopulateClearPassCommandList()
 
     PIXBeginEvent(pCmdList, 0, "Render targets clear");
 
-    std::array<D3D12_RESOURCE_BARRIER, 3> barriers = {
+    std::array barriers{
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[0]->_texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[1]->_texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[2]->_texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
@@ -501,7 +530,7 @@ void SceneManager::PopulateLightPassCommandList()
 
 void SceneManager::WaitCurrentFrame()
 {
-    PIXBeginEvent(_cmdQueue.Get(), 0, "Waiting for a fence");
+    PIXScopedEvent(_cmdQueue.Get(), 0, "Waiting for a fence");
     uint64_t newFenceValue = _fenceValue;
 
     ThrowIfFailed(_cmdQueue->Signal(_frameFence.Get(), newFenceValue));
@@ -514,7 +543,6 @@ void SceneManager::WaitCurrentFrame()
     }
 
     _frameIndex = _swapChain->GetCurrentBackBufferIndex();
-    PIXEndEvent(_cmdQueue.Get());
 }
 
 void SceneManager::ThreadDrawRoutine(size_t threadId)
@@ -1068,7 +1096,6 @@ void SceneManager::FillSceneProperties()
 
 void SceneManager::CreateRootSignatures()
 {
-    // this is becoming monstrous...
     CreateMRTPassRootSignature();
     CreateLightPassRootSignature();
     CreateLDRPassRootSignature();
