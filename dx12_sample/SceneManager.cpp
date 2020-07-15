@@ -296,6 +296,7 @@ void SceneManager::DrawAll()
         PopulateWorkerCommandLists();
         for (auto& pWorkList : _workerCmdLists)
             cmdListArray.push_back(pWorkList->GetInternal().Get());
+        PIXSetMarker(_cmdQueue.Get(), 0, "Queue marker");
         _cmdQueue->ExecuteCommandLists((UINT)_workerCmdLists.size(), cmdListArray.data());
     }
 
@@ -358,6 +359,7 @@ void SceneManager::PopulateClearPassCommandList()
     _rtManager->ClearRenderTarget(*_mrtRts[0], *_clearPassCmdList);
     _rtManager->ClearRenderTarget(*_mrtRts[1], *_clearPassCmdList);
     _rtManager->ClearRenderTarget(*_mrtRts[2], *_clearPassCmdList);
+    PIXSetMarker(pCmdList, 0, "Some marker!");
     _rtManager->ClearDepthStencil(*_mrtDepth, *_clearPassCmdList);
 
     PIXEndEvent(pCmdList);
