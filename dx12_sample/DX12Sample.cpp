@@ -2,7 +2,7 @@
 
 #include "DX12Sample.h"
 
-#include "Math.h"
+#include <utils/Math.h>
 #include <utils/Shaders.h>
 #include <utils/FeaturesCollector.h>
 
@@ -356,9 +356,10 @@ void DX12Sample::CreateTextures()
                            textureMips.data());
 
         // Add barrier to upload texture
-        pCmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(_texture[0].Get(),
-                                                                           D3D12_RESOURCE_STATE_COPY_DEST,
-                                                                           D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+        auto transition = CD3DX12_RESOURCE_BARRIER::Transition(_texture[0].Get(),
+                                                               D3D12_RESOURCE_STATE_COPY_DEST,
+                                                               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        pCmdList->ResourceBarrier(1, &transition);
 
         // Now we need to prepare SRV for Texture
         textureSRVDesc.Format = textureResourceDesc.Format;
@@ -409,9 +410,10 @@ void DX12Sample::CreateTextures()
                            textureMips.data());
 
         // Add barrier to upload texture
-        pCmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(_texture[1].Get(),
-                                                                           D3D12_RESOURCE_STATE_COPY_DEST,
-                                                                           D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+        auto transition = CD3DX12_RESOURCE_BARRIER::Transition(_texture[1].Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        pCmdList->ResourceBarrier(1, &transition);
 
         // Now we need to prepare SRV for Texture
         textureSRVDesc.Format = textureResourceDesc.Format;
@@ -476,9 +478,10 @@ void DX12Sample::CreateTextures()
                            textureMips.data());
 
         // Add barrier to upload texture
-        pCmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(_texture[2].Get(),
-                                                                           D3D12_RESOURCE_STATE_COPY_DEST,
-                                                                           D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+        auto transition = CD3DX12_RESOURCE_BARRIER::Transition(_texture[2].Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        pCmdList->ResourceBarrier(1, &transition);
 
         // Now we need to prepare SRV for Texture
         textureSRVDesc.Format = textureResourceDesc.Format;

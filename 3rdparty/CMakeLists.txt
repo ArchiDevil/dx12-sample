@@ -4,7 +4,7 @@ set(SRC
     DDSTextureLoader.h
     DDS.h
     PlatformHelpers.h
-    )
+)
 
 add_library(3rdparty STATIC ${SRC})
 

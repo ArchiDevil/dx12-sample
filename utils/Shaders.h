@@ -75,9 +75,15 @@ inline void CompileShaderFromFile(const std::wstring &fileName, ShaderType type,
 
     ComPtr<ID3DBlob> error = nullptr;
     if (FAILED(D3DCompileFromFile(fileName.c_str(), macro, nullptr, entryPoint.c_str(), shaderVersion.c_str(), compileFlags, 0, out_blob, &error)))
+    {
         if (error)
+        {
             MessageBoxA(NULL, (const char*)error->GetBufferPointer(), NULL, NULL);
+        }
         else
+        {
             throw std::runtime_error("Unable to compile shader from file");
+        }
+    }
 }
 };

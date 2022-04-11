@@ -7,7 +7,7 @@ set(SRC
     SceneManager.cpp
     SceneManager.h
     stdafx.h
-    )
+)
 
 add_executable(dx12_sample ${SRC})
 

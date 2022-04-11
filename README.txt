@@ -1,8 +1,8 @@
 DX12 sample, revision 1.3, created 2015-09-23.
 
-In order to build the sample on Windows10 machine, you have to manually update Target Platform Version in sample project properties in VS2015 to 10.X.XXXX.
+To build it, please execute `build.bat` file or use a usual CMake building procedure (generate cache and build ALL_BUILD target). It was tested on MSVS 2019 and 2022 versions.
 
-dx12_sample executable accepts following command line options in any order:
+dx12_sample executable accepts the following command line options:
     --disable_bundles               - Don't use bundle cmd lists
     --disable_concurrency           - Render from single thread
     --disable_root_constants        - Don't use in place root constants in RootSignature
@@ -10,4 +10,4 @@ dx12_sample executable accepts following command line options in any order:
     --disable_shadow_pass           - Don't use shadow mapping (no depth pass, simple shader) for rendering
     --enable_tessellation           - Use easy displacement mapping on all meshes (enables hull/domain shader)
 
-Best regards,
+Best regards, ArchiDevil

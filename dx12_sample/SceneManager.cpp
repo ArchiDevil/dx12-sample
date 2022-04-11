@@ -230,7 +230,7 @@ void SceneManager::SetBackgroundCubemap(const std::wstring& name)
     textureUploadBuffer.Attach(pTex_upload);
 
     uploadCommandList.Close();
-    
+
     {
         PIXScopedEvent(_cmdQueue.Get(), PIX_COLOR(255, 0, 0), "Cubemap filling");
         ExecuteCommandLists(uploadCommandList);
@@ -381,7 +381,10 @@ void SceneManager::PopulateDepthPassCommandList()
     D3D12_VIEWPORT viewport = {0, 0, (float)depthMapSize, (float)depthMapSize, 0.0f, 1.0f};
     pCmdList->RSSetViewports(1, &viewport);
 
-    pCmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(_shadowDepth->_texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE));
+    {
+        auto transition = CD3DX12_RESOURCE_BARRIER::Transition(_shadowDepth->_texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+        pCmdList->ResourceBarrier(1, &transition);
+    }
 
     _rtManager->ClearDepthStencil(*_shadowDepth, *_depthPassCmdList);
     RenderTarget* rts[8] = {};
@@ -444,7 +447,10 @@ void SceneManager::PopulateLightPassCommandList()
     D3D12_VIEWPORT viewport = {0, 0, (FLOAT)_screenWidth, (FLOAT)_screenHeight, 0.0f, 1.0f};
     pCmdList->RSSetViewports(1, &viewport);
 
-    pCmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(_HDRRt->_texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET));
+    {
+        auto transition = CD3DX12_RESOURCE_BARRIER::Transition(_HDRRt->_texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        pCmdList->ResourceBarrier(1, &transition);
+    }
 
     RenderTarget* rts[8] = {_HDRRt.get()};
     _rtManager->BindRenderTargets(rts, nullptr, *_lightPassCmdList);
@@ -458,8 +464,10 @@ void SceneManager::PopulateLightPassCommandList()
 
     pCmdList->ResourceBarrier((UINT)barriers.size(), barriers.data());
 
-    if (_cmdLineOpts.shadow_pass)
-        pCmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(_shadowDepth->_texture.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+    if (_cmdLineOpts.shadow_pass) {
+        auto transition = CD3DX12_RESOURCE_BARRIER::Transition(_shadowDepth->_texture.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        pCmdList->ResourceBarrier(1, &transition);
+    }
 
     pCmdList->SetGraphicsRootSignature(_lightRootSignature.GetInternal().Get());
 
@@ -483,8 +491,14 @@ void SceneManager::PopulateLightPassCommandList()
     // This can be easily done with compute shaders
 
     PIXBeginEvent(pCmdList, 0, "Luminance computing");
-    pCmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(_HDRRt->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
-    pCmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(_finalIntensityBuffer.Get(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+    {
+        auto transition = CD3DX12_RESOURCE_BARRIER::Transition(_HDRRt->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        pCmdList->ResourceBarrier(1, &transition);
+    }
+    {
+        auto transition = CD3DX12_RESOURCE_BARRIER::Transition(_finalIntensityBuffer.Get(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        pCmdList->ResourceBarrier(1, &transition);
+    }
 
     ppHeaps[0] = _customsHeap.Get();
     pCmdList->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
@@ -502,13 +516,19 @@ void SceneManager::PopulateLightPassCommandList()
 
     pCmdList->Dispatch((_screenHeight / 32) + 1, 1, 1);
 
-    pCmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(_finalIntensityBuffer.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
+    {
+        auto transition = CD3DX12_RESOURCE_BARRIER::Transition(_finalIntensityBuffer.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+        pCmdList->ResourceBarrier(1, &transition);
+    }
     PIXEndEvent(pCmdList);
 
     //////////////////////////////////////////////////////////////////////////
 
     PIXBeginEvent(pCmdList, 0, "HDR -> LDR pass");
-    pCmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(_swapChainRTs[_frameIndex]->_texture.Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
+    {
+        auto transition = CD3DX12_RESOURCE_BARRIER::Transition(_swapChainRTs[_frameIndex]->_texture.Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        pCmdList->ResourceBarrier(1, &transition);
+    }
     pCmdList->SetPipelineState(_LDRPassState->GetPSO().Get());
     pCmdList->SetGraphicsRootSignature(_LDRRootSignature.GetInternal().Get());
 
@@ -524,7 +544,10 @@ void SceneManager::PopulateLightPassCommandList()
     _objScreenQuad->Draw(pCmdList);
 
     // Indicate that the back buffer will be used as a render target.
-    pCmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(_swapChainRTs[_frameIndex]->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
+    {
+        auto transition = CD3DX12_RESOURCE_BARRIER::Transition(_swapChainRTs[_frameIndex]->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+        pCmdList->ResourceBarrier(1, &transition);
+    }
     PIXEndEvent(pCmdList);
 
     _lightPassCmdList->Close();
@@ -1063,11 +1086,17 @@ void SceneManager::FillViewProjMatrix()
 
     XMMATRIX viewProjectionMatrix = _viewCamera.GetViewProjMatrix();
     std::memcpy(reinterpret_cast<perFrameParamsConstantBuffer*>(_cbvMRT)->viewProjectionMatrix, viewProjectionMatrix.r, sizeof(XMMATRIX));
-    std::memcpy(reinterpret_cast<perFrameParamsConstantBuffer*>(_cbvMRT)->cameraPosition, &_viewCamera.GetEyePosition(), sizeof(XMFLOAT4));
+    {
+        auto eye_pos = _viewCamera.GetEyePosition();
+        std::memcpy(reinterpret_cast<perFrameParamsConstantBuffer*>(_cbvMRT)->cameraPosition, &eye_pos, sizeof(XMFLOAT4));
+    }
 
     XMMATRIX depthProjectionMatrix = _shadowCamera.GetViewProjMatrix();
     std::memcpy(reinterpret_cast<perFrameParamsConstantBuffer*>(_cbvDepth)->viewProjectionMatrix, depthProjectionMatrix.r, sizeof(XMMATRIX));
-    std::memcpy(reinterpret_cast<perFrameParamsConstantBuffer*>(_cbvDepth)->cameraPosition, &_shadowCamera.GetEyePosition(), sizeof(XMFLOAT4));
+    {
+        auto eye_pos = _shadowCamera.GetEyePosition();
+        std::memcpy(reinterpret_cast<perFrameParamsConstantBuffer*>(_cbvDepth)->cameraPosition, &eye_pos, sizeof(XMFLOAT4));
+    }
 }
 
 void SceneManager::FillSceneProperties()
