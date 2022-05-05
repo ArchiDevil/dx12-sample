@@ -64,7 +64,8 @@ float4 restoreWorldPosition(float2 texcoord)
 
 float F_Shlick(float NoV, float ior)
 {
-    float R0 = pow((1 - ior) / (1 + ior), 2.0);
+    float k = (1 - ior) / (1 + ior);
+    float R0 = k * k;
     return R0 + (1 - R0) * pow(1 - NoV, 5.0);
 }
 
