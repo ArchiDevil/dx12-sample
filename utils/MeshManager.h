@@ -2,6 +2,8 @@
 
 #include "stdafx.h"
 
+#include "assimp/mesh.h"
+
 class MeshObject
 {
 public:
@@ -47,6 +49,7 @@ public:
     std::shared_ptr<MeshObject> CreateSphere();
     std::shared_ptr<MeshObject> CreatePlane();
     std::shared_ptr<MeshObject> CreateScreenQuad();
+    std::shared_ptr<MeshObject> CreateFromAssimpMesh(const aiMesh* mesh);
 
 private:
     std::vector<std::shared_ptr<MeshObject>> _meshes;

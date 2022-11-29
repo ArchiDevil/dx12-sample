@@ -7,8 +7,11 @@ Texture2D    shadowTexture  : register(t3);
 
 TextureCube  reflectionTexture : register(t4);
 
+Texture2D<float3>    aoTexture  : register(t5);
+
 SamplerState texture_sampler            : register(s0);
 SamplerComparisonState shadow_sampler   : register(s1);
+SamplerState ao_sampler                 : register(s2);
 
 cbuffer SquadParams : register(b0)
 {
@@ -158,7 +161,11 @@ float4 ps_main(PS_IN input) : SV_TARGET
     color += (diffuseSample.xyz * diffuseFactor * (1 - specularFactor) + specularFactor) * 1.5f;
 #endif
 
-    float fogFactor = 1 - 1.0f / exp(pow(pixelDistance * (1.0f / (sceneSize * 4.0f)), 2.0f));
-    color = lerp(color, fogColor, fogFactor);
+    float oclusion = aoTexture.Sample(texture_sampler, input.uv).x;
+    color *= oclusion;
+
+    //float fogFactor = 1 - 1.0f / exp(pow(pixelDistance * (1.0f / (sceneSize * 4.0f)), 2.0f));
+    //color = lerp(color, fogColor, fogFactor);
+
     return float4(color, 1.0);
 }

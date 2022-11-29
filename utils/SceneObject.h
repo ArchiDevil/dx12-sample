@@ -23,8 +23,10 @@ public:
     DirectX::XMFLOAT3 Scale() const;
     void Scale(DirectX::XMFLOAT3 val);
 
-    float Rotation() const;
-    void Rotation(float val);
+    float RotationX() const;
+    void RotationX(float val);
+	void RotationY(float val);
+	void RotationZ(float val);
 
     void * operator new(size_t i)
     {
@@ -46,7 +48,9 @@ private:
 
     XMFLOAT3                            _position = {0.0f, 0.0f, 0.0f};
     XMFLOAT3                            _scale = {1.0f, 1.0f, 1.0f};
-    float                               _rotation = 0.0f;
+    float                               _rotationX = 0.0f;
+	float                               _rotationY = 0.0f;
+	float                               _rotationZ = 0.0f;
     XMMATRIX                            _worldMatrix = XMMatrixIdentity();
 
     ComPtr<ID3D12Resource>              _constantBuffer = nullptr;

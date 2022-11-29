@@ -94,15 +94,27 @@ void SceneObject::Scale(DirectX::XMFLOAT3 val)
     _transformDirty = true;
 }
 
-float SceneObject::Rotation() const
+float SceneObject::RotationX() const
 {
-    return _rotation;
+    return _rotationX;
 }
 
-void SceneObject::Rotation(float val)
+void SceneObject::RotationX(float val)
 {
-    _rotation = val;
+    _rotationX = val;
     _transformDirty = true;
+}
+
+void SceneObject::RotationY(float val)
+{
+	_rotationY = val;
+	_transformDirty = true;
+}
+
+void SceneObject::RotationZ(float val)
+{
+	_rotationZ = val;
+	_transformDirty = true;
 }
 
 ComPtr<ID3D12Resource> SceneObject::GetConstantBuffer() const
@@ -113,10 +125,12 @@ ComPtr<ID3D12Resource> SceneObject::GetConstantBuffer() const
 void SceneObject::CalculateWorldMatrix()
 {
     XMMATRIX translationMatrix = XMMatrixTranslation(_position.x, _position.y, _position.z);
-    XMMATRIX rotationMatrix = XMMatrixRotationX(_rotation);
+    XMMATRIX rotationXMatrix = XMMatrixRotationX(_rotationX);
+	XMMATRIX rotationYMatrix = XMMatrixRotationY(_rotationY);
+	XMMATRIX rotationZMatrix = XMMatrixRotationZ(_rotationZ);
     XMMATRIX scaleMatrix = XMMatrixScaling(_scale.x, _scale.y, _scale.z);
 
-    _worldMatrix = scaleMatrix * rotationMatrix * translationMatrix;
+    _worldMatrix = scaleMatrix * rotationXMatrix * rotationYMatrix * rotationZMatrix * translationMatrix;
 
     perModelParamsConstantBuffer * bufPtr = nullptr;
     ThrowIfFailed(_constantBuffer->Map(0, nullptr, reinterpret_cast<void**>(&bufPtr)));

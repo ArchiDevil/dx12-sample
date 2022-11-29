@@ -4,6 +4,11 @@
 
 #include <utils/RenderTargetManager.h>
 #include <utils/Shaders.h>
+#include <locale>
+#include <codecvt>
+
+#include <assimp/Importer.hpp>
+#include <assimp/postprocess.h>
 
 #include <random>
 
@@ -37,6 +42,385 @@ unsigned GetRandomNumber(unsigned min, unsigned max)
     return uniform_dist(e1);
 }
 
+// create screen quad
+std::vector<screenQuadVertex> screenQuadVertices =
+{
+    { { -1.0f,  1.0f },{ 0.0f, 0.0f } },
+    { { 1.0f,  1.0f },{ 1.0f, 0.0f } },
+    { { 1.0f, -1.0f },{ 1.0f, 1.0f } },
+    { { -1.0f,  1.0f },{ 0.0f, 0.0f } },
+    { { 1.0f, -1.0f },{ 1.0f, 1.0f } },
+    { { -1.0f, -1.0f },{ 0.0f, 1.0f } },
+};
+
+void BlurEffect::Init(UINT _screenWidth, UINT _screenHeight, float direction[], DXGI_FORMAT format,
+                    RenderTargetManager* _rtManager, ComPtr<ID3D12Device> _pDevice, std::shared_ptr<MeshManager>&  _meshManager, std::shared_ptr<RenderTarget> Input,
+                    std::shared_ptr<RenderTarget> Output, std::shared_ptr<RenderTarget> Depth, const std::wstring& BlurName)
+{
+    m_screenWidth = _screenWidth;	m_screenHeight = _screenHeight;
+    m_direction[0] = direction[0]; m_direction[1] = direction[1];
+    m_Inp = Input;
+    m_rtManager = _rtManager;
+    m_pDevice = _pDevice;
+    m_Name = BlurName;
+    m_Format = format;
+    m_Depth = Depth;
+    m_meshManager = _meshManager;
+
+    if (_rtManager == nullptr || m_pDevice == nullptr )
+        return;
+
+    // Create Heap for the Texture
+    D3D12_DESCRIPTOR_HEAP_DESC texHeapDesc = {};
+    texHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    texHeapDesc.NumDescriptors = 100;
+    texHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    ThrowIfFailed(m_pDevice->CreateDescriptorHeap(&texHeapDesc, IID_PPV_ARGS(&m_customsHeap)));
+    const std::wstring tmp_name = m_Name + L"_heap";
+    m_customsHeap.Get()->SetName(tmp_name.c_str());
+
+    if (Output != nullptr)
+    {
+        m_Out = Output;
+        m_OutIsExternalRT = true;
+    }
+    else
+    {
+        m_Out = _rtManager->CreateRenderTarget(format, m_screenWidth, m_screenHeight, m_Name + L"_texture", true);
+        std::wstring name = m_Name + L"_buffer";
+        m_Out->_texture->SetName(name.c_str());
+        m_OutIsExternalRT = false;
+    }
+
+    // map input and output
+    D3D12_CPU_DESCRIPTOR_HANDLE customsHeapHandle = m_customsHeap->GetCPUDescriptorHandleForHeapStart();
+    UINT CbvSrvUavHeapIncSize = m_pDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    m_pDevice->CreateShaderResourceView(m_Inp->_texture.Get(), nullptr, customsHeapHandle);
+    customsHeapHandle.ptr += CbvSrvUavHeapIncSize;
+    m_pDevice->CreateShaderResourceView(m_Depth->_texture.Get(), nullptr, customsHeapHandle);
+    customsHeapHandle.ptr += CbvSrvUavHeapIncSize;
+    m_pDevice->CreateShaderResourceView(m_Out->_texture.Get(), nullptr, customsHeapHandle);
+    customsHeapHandle.ptr += CbvSrvUavHeapIncSize;
+
+    // Create root signature
+    StaticSampler Sampler{};
+    D3D12_STATIC_SAMPLER_DESC& SamplerDesc = Sampler;
+    SamplerDesc.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+    SamplerDesc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    SamplerDesc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    SamplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+
+    m_RootSignature.Init(2, 1);
+    m_RootSignature[0].InitAsDescriptorsTable(1);
+    m_RootSignature[0].InitTableRange(0, 0, 2, D3D12_DESCRIPTOR_RANGE_TYPE_SRV);
+    m_RootSignature[1].InitAsCBV(0);
+
+    m_RootSignature.InitStaticSampler(0, Sampler);
+    m_RootSignature.Finalize(m_pDevice, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+    // Create pipeline state
+    ComPtr<ID3DBlob> VSblob = nullptr;
+    ComPtr<ID3DBlob> PSblob = nullptr;
+    D3D_SHADER_MACRO macro[] = { NULL, NULL };
+
+    std::wstring squadFileName = L"assets/shaders/Blur.hlsl";
+    ShadersUtils::CompileShaderFromFile(squadFileName, ShaderType::Vertex, &VSblob, macro);
+    ShadersUtils::CompileShaderFromFile(squadFileName, ShaderType::Pixel, &PSblob, macro);
+
+    m_PassState = std::make_unique<GraphicsPipelineState>(m_RootSignature,
+                        D3D12_INPUT_LAYOUT_DESC{ screenQuadInputElements, _countof(screenQuadInputElements) });
+    m_PassState->SetShaderCode(VSblob, ShaderType::Vertex);
+    m_PassState->SetShaderCode(PSblob, ShaderType::Pixel);
+    m_PassState->SetRenderTargetFormats({ m_Format });
+    m_PassState->SetDepthStencilState({ FALSE });
+    m_PassState->Finalize(m_pDevice);
+
+    m_objScreenQuad = std::make_unique<SceneObject>(m_meshManager->CreateScreenQuad(), m_pDevice, nullptr);
+
+    // create constant buffer
+    D3D12_RESOURCE_DESC constantBufferDesc = {};
+    constantBufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    constantBufferDesc.Width = sizeof(BlurParams);
+    constantBufferDesc.Height = 1;
+    constantBufferDesc.MipLevels = 1;
+    constantBufferDesc.SampleDesc.Count = 1;
+    constantBufferDesc.DepthOrArraySize = 1;
+    constantBufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+    D3D12_HEAP_PROPERTIES heapProp = { D3D12_HEAP_TYPE_UPLOAD };
+    ThrowIfFailed(m_pDevice->CreateCommittedResource(&heapProp,
+        D3D12_HEAP_FLAG_NONE,	&constantBufferDesc,
+        D3D12_RESOURCE_STATE_GENERIC_READ,	nullptr, IID_PPV_ARGS(&m_cbvParams)));
+
+    D3D12_RANGE readRange = { 0, 0 };
+    ThrowIfFailed(m_cbvParams->Map(0, &readRange, &m_cbvParamsMapped));
+
+    BlurParams* pParams = reinterpret_cast<BlurParams*>(m_cbvParamsMapped);
+    pParams->step[0] = (float)m_direction[0]/(float)m_screenWidth;
+    pParams->step[1] = (float)m_direction[1]/(float)m_screenHeight;
+}
+
+void BlurEffect::DoBlur(std::unique_ptr<CommandList>&  CmdList)
+{
+    static bool first_pass = false;
+
+    std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> converterX;
+    std::string tmp = converterX.to_bytes(m_Name) + " execution";
+    ID3D12GraphicsCommandList *pCmdList = CmdList->GetInternal().Get();
+    PIXBeginEvent(pCmdList, 0, tmp.c_str());
+
+
+    ID3D12DescriptorHeap* ppHeaps[] = { m_customsHeap.Get() };
+    pCmdList->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
+
+    pCmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+    D3D12_RECT scissor = { 0, 0, (LONG)m_screenWidth, (LONG)m_screenHeight };
+    D3D12_VIEWPORT viewport = { 0, 0, (FLOAT)m_screenWidth, (FLOAT)m_screenHeight, 0.0f, 1.0f };
+    pCmdList->RSSetViewports(1, &viewport);
+    pCmdList->RSSetScissorRects(1, &scissor);
+    pCmdList->SetPipelineState(m_PassState->GetPSO().Get());
+    pCmdList->SetGraphicsRootSignature(m_RootSignature.GetInternal().Get());
+
+    pCmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(m_Inp->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+
+    D3D12_GPU_DESCRIPTOR_HANDLE texHandle = m_customsHeap->GetGPUDescriptorHandleForHeapStart();
+    pCmdList->SetGraphicsRootDescriptorTable(0, texHandle);
+    pCmdList->SetGraphicsRootConstantBufferView(1, m_cbvParams->GetGPUVirtualAddress());
+
+    RenderTarget* rts[8] = { m_Out.get() };
+    m_rtManager->BindRenderTargets(rts, nullptr, *CmdList);
+    m_rtManager->ClearRenderTarget(*rts[0], *CmdList);
+
+    m_objScreenQuad->Draw(pCmdList);
+
+    pCmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(m_Inp->_texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET ));
+
+    PIXEndEvent(pCmdList);
+    first_pass = false;
+}
+
+
+void HBAO::Init(UINT _screenWidth, UINT _screenHeight, const math::mat4f& ProjectionMatrix, DXGI_FORMAT format,
+    RenderTargetManager* _rtManager, ComPtr<ID3D12Device> _pDevice, std::shared_ptr<MeshManager>&  _meshManager, CommandList& CmdList,
+    std::shared_ptr<RenderTarget> Output, std::shared_ptr<RenderTarget> Depth, const std::wstring& BlurName)
+{
+    m_screenWidth = _screenWidth;	m_screenHeight = _screenHeight;
+    m_rtManager = _rtManager;
+    m_pDevice = _pDevice;
+    m_Name = BlurName;
+    m_Format = format;
+    m_Depth = Depth;
+    m_meshManager = _meshManager;
+    m_AOscreenWidth = m_screenWidth / 2;
+    m_AOscreenHeight = m_screenHeight / 2;
+
+    if (_rtManager == nullptr || m_pDevice == nullptr)
+        return;
+
+    // Create Heap for the Texture
+    D3D12_DESCRIPTOR_HEAP_DESC texHeapDesc = {};
+    texHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    texHeapDesc.NumDescriptors = 100;
+    texHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    ThrowIfFailed(m_pDevice->CreateDescriptorHeap(&texHeapDesc, IID_PPV_ARGS(&m_customsHeap)));
+    const std::wstring tmp_name = m_Name + L"_heap";
+    m_customsHeap.Get()->SetName(tmp_name.c_str());
+
+    // output of HBAO shader
+    m_AOOut = _rtManager->CreateRenderTarget(format, m_AOscreenWidth, m_AOscreenHeight, m_Name + L"_texture", true);
+    std::wstring name = m_Name + L"_buffer";
+    m_AOOut->_texture->SetName(name.c_str());
+    m_OutIsExternalRT = false;
+
+    if (Output != nullptr)
+    {
+        m_AOBluredOut = Output;
+        m_OutIsExternalRT = true;
+    }
+    else
+    {
+        m_AOBluredOut = _rtManager->CreateRenderTarget(format, m_screenWidth, m_screenHeight, m_Name + L"_blured_texture", true);
+        std::wstring name = m_Name + L"_blured_buffer";
+        m_AOBluredOut->_texture->SetName(name.c_str());
+        m_OutIsExternalRT = false;
+    }
+
+    CreateNoise(CmdList);
+
+    // map input noise, and output
+    D3D12_CPU_DESCRIPTOR_HANDLE customsHeapHandle = m_customsHeap->GetCPUDescriptorHandleForHeapStart();
+    UINT CbvSrvUavHeapIncSize = m_pDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    m_pDevice->CreateShaderResourceView(m_Depth->_texture.Get(), nullptr, customsHeapHandle);
+    customsHeapHandle.ptr += CbvSrvUavHeapIncSize;
+    m_pDevice->CreateShaderResourceView(_Noise.Get(), nullptr, customsHeapHandle);
+    customsHeapHandle.ptr += CbvSrvUavHeapIncSize;
+
+    // Create root signature
+    StaticSampler Sampler{};
+    D3D12_STATIC_SAMPLER_DESC& SamplerDesc = Sampler;
+    SamplerDesc.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+    SamplerDesc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    SamplerDesc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    SamplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+
+    StaticSampler NoiseSampler{};
+    D3D12_STATIC_SAMPLER_DESC& NoiseSamplerDesc = NoiseSampler;
+    NoiseSamplerDesc.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+    NoiseSamplerDesc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    NoiseSamplerDesc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    NoiseSamplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    NoiseSamplerDesc.ShaderRegister = 1;
+
+    m_RootSignature.Init(2, 2);
+    m_RootSignature[0].InitAsDescriptorsTable(1);
+    m_RootSignature[0].InitTableRange(0, 0, 3, D3D12_DESCRIPTOR_RANGE_TYPE_SRV);
+    m_RootSignature[1].InitAsCBV(0);
+
+    m_RootSignature.InitStaticSampler(0, Sampler);
+    m_RootSignature.InitStaticSampler(1, NoiseSampler);
+    m_RootSignature.Finalize(m_pDevice, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+    // Create pipeline state
+    ComPtr<ID3DBlob> VSblob = nullptr;
+    ComPtr<ID3DBlob> PSblob = nullptr;
+    D3D_SHADER_MACRO macro[] = { NULL, NULL };
+
+    std::wstring squadFileName = L"assets/shaders/AOPass.hlsl";
+    ShadersUtils::CompileShaderFromFile(squadFileName, ShaderType::Vertex, &VSblob, macro);
+    ShadersUtils::CompileShaderFromFile(squadFileName, ShaderType::Pixel, &PSblob, macro);
+
+    m_PassState = std::make_unique<GraphicsPipelineState>(m_RootSignature,
+        D3D12_INPUT_LAYOUT_DESC{ screenQuadInputElements, _countof(screenQuadInputElements) });
+    m_PassState->SetShaderCode(VSblob, ShaderType::Vertex);
+    m_PassState->SetShaderCode(PSblob, ShaderType::Pixel);
+    m_PassState->SetRenderTargetFormats({ m_Format });
+    m_PassState->SetDepthStencilState({ FALSE });
+    m_PassState->Finalize(m_pDevice);
+
+    m_objScreenQuad = std::make_unique<SceneObject>(m_meshManager->CreateScreenQuad(), m_pDevice, nullptr);
+
+    // create constant buffer
+    D3D12_RESOURCE_DESC constantBufferDesc = {};
+    constantBufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    constantBufferDesc.Width = sizeof(AOParams);
+    constantBufferDesc.Height = 1;
+    constantBufferDesc.MipLevels = 1;
+    constantBufferDesc.SampleDesc.Count = 1;
+    constantBufferDesc.DepthOrArraySize = 1;
+    constantBufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+    D3D12_HEAP_PROPERTIES heapProp = { D3D12_HEAP_TYPE_UPLOAD };
+    ThrowIfFailed(m_pDevice->CreateCommittedResource(&heapProp,
+        D3D12_HEAP_FLAG_NONE, &constantBufferDesc,
+        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_cbvParams)));
+
+    D3D12_RANGE readRange = { 0, 0 };
+    ThrowIfFailed(m_cbvParams->Map(0, &readRange, &m_cbvParamsMapped));
+
+    AOParams* pParams = reinterpret_cast<AOParams*>(m_cbvParamsMapped);
+
+    math::mat4f projectionInvMatrix  = matrixInverse(ProjectionMatrix);;
+
+    std::memcpy(reinterpret_cast<AOParams*>(m_cbvParamsMapped)->viewProjectionInvMatrix, (float*)projectionInvMatrix, sizeof(XMMATRIX));
+    pParams->_screenInvWidth = 1.0f / (float)m_screenWidth;
+    pParams->_screenInvHeight = 1.0f / (float)m_screenHeight;
+
+    // create blur
+    float dir_x[2] = { 1.0, 0.0 };
+    BlurEffect_X.Init(m_screenWidth, m_screenHeight, dir_x, m_Format, m_rtManager, m_pDevice, m_meshManager, m_AOOut, nullptr, m_Depth, L"HBAO_Blur_X");
+
+    float dir_y[2] = { 0.0, 1.0 };
+    std::shared_ptr<RenderTarget> tmpX = BlurEffect_X.GetOut();
+    BlurEffect_Y.Init(m_screenWidth, m_screenHeight, dir_y, m_Format, m_rtManager, m_pDevice, m_meshManager, tmpX, m_AOBluredOut, m_Depth, L"HBAO_Blur_Y");
+
+}
+
+void HBAO::CreateNoise(CommandList& CmdList)
+{
+    D3D12_RESOURCE_DESC textureDesc = {};
+    textureDesc.MipLevels = 1;
+    textureDesc.Format = DXGI_FORMAT_R32_FLOAT;
+    textureDesc.Width = m_screenWidth / 10;
+    textureDesc.Height = m_screenHeight / 10;
+    textureDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+    textureDesc.DepthOrArraySize = 1;
+    textureDesc.SampleDesc.Count = 1;
+    textureDesc.SampleDesc.Quality = 0;
+    textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+
+    ThrowIfFailed(m_pDevice->CreateCommittedResource(
+        &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+        D3D12_HEAP_FLAG_NONE,
+        &textureDesc,
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        nullptr,
+        IID_PPV_ARGS(&_Noise)));
+
+    const UINT64 uploadBufferSize = GetRequiredIntermediateSize(_Noise.Get(), 0, 1);
+
+    ThrowIfFailed(m_pDevice->CreateCommittedResource(
+        &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
+        D3D12_HEAP_FLAG_NONE,
+        &CD3DX12_RESOURCE_DESC::Buffer(uploadBufferSize),
+        D3D12_RESOURCE_STATE_GENERIC_READ,
+        nullptr,
+        IID_PPV_ARGS(&_NoiseUploadHeap)));
+
+    m_texture_data = new float[textureDesc.Width * textureDesc.Height];
+    for (uint32_t i = 0; i < textureDesc.Width * textureDesc.Height; i++)
+        m_texture_data[i] = (float)rand() / (float)RAND_MAX;
+
+    D3D12_SUBRESOURCE_DATA textureData = {};
+    textureData.pData = m_texture_data;
+    textureData.RowPitch = textureDesc.Width * sizeof(float);
+    textureData.SlicePitch = textureData.RowPitch * textureDesc.Height;
+
+    UpdateSubresources(CmdList.GetInternal().Get(), _Noise.Get(), _NoiseUploadHeap.Get(), 0, 0, 1, &textureData);
+    _Noise->SetName(L"Noise");
+
+    CmdList.GetInternal()->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(_Noise.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+}
+
+void HBAO::DoHBAO(std::unique_ptr<CommandList>&  CmdList)
+{
+    ID3D12GraphicsCommandList *pCmdList = CmdList->GetInternal().Get();
+
+    //////////////////////////////////////////////////////////////////////////
+    PIXBeginEvent(pCmdList, 0, "HBAO");
+
+    ID3D12DescriptorHeap* ppHeaps[] = { m_customsHeap.Get() };
+    pCmdList->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
+
+    pCmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+    D3D12_VIEWPORT AOviewport = { 0, 0, (FLOAT)m_AOscreenWidth, (FLOAT)m_AOscreenHeight, 0.0f, 1.0f };
+    D3D12_RECT AOscissor = { 0, 0, (LONG)m_AOscreenWidth, (LONG)m_AOscreenHeight };
+
+    pCmdList->RSSetViewports(1, &AOviewport);
+    pCmdList->RSSetScissorRects(1, &AOscissor);
+
+    pCmdList->SetPipelineState(m_PassState->GetPSO().Get());
+    pCmdList->SetGraphicsRootSignature(m_RootSignature.GetInternal().Get());
+
+    D3D12_GPU_DESCRIPTOR_HANDLE texHandle = m_customsHeap->GetGPUDescriptorHandleForHeapStart();
+    pCmdList->SetGraphicsRootDescriptorTable(0, texHandle);
+    pCmdList->SetGraphicsRootConstantBufferView(1, m_cbvParams->GetGPUVirtualAddress());
+
+    RenderTarget* AOrts[8] = { m_AOOut.get() };
+    m_rtManager->BindRenderTargets(AOrts, nullptr, *CmdList);
+    m_rtManager->ClearRenderTarget(*AOrts[0], *CmdList);
+
+    m_objScreenQuad->Draw(pCmdList);
+
+    BlurEffect_X.DoBlur(CmdList);
+    BlurEffect_Y.DoBlur(CmdList);
+    PIXEndEvent(pCmdList);
+}
+
+const float __zNear = 0.01f;
+const float __zFar  = 100.0f;
+
 SceneManager::SceneManager(ComPtr<ID3D12Device> pDevice,
                            UINT screenWidth,
                            UINT screenHeight,
@@ -56,18 +440,18 @@ SceneManager::SceneManager(ComPtr<ID3D12Device> pDevice,
     , _frameIndex(pSwapChain->GetCurrentBackBufferIndex())
     , _swapChainRTs(_swapChainRTs)
     , _rtManager(rtManager)
-    , _viewCamera(Graphics::ProjectionType::Perspective,
-                  0.1f,
-                  objectOnSceneInRow * 5.0f,
-                  5.0f * pi / 18.0f,
-                  static_cast<float>(screenWidth),
-                  static_cast<float>(screenHeight))
-    , _shadowCamera(Graphics::ProjectionType::Perspective,
-                    1.0f,
-                    objectOnSceneInRow * 5.0f,
-                    9.0f * pi / 18.0f,
+    , _viewCamera(static_cast<float>(screenWidth),
+                  static_cast<float>(screenHeight),
+                  __zNear,
+                  objectOnSceneInRow * __zFar * 100.0f,
+                  5.0f * M_PIF / 18.0f,
+                  Graphics::ProjectionType::Perspective)
+    , _shadowCamera(depthMapSize / depthMapSize * objectOnSceneInRow * 3.0f,
                     depthMapSize / depthMapSize * objectOnSceneInRow * 3.0f,
-                    depthMapSize / depthMapSize * objectOnSceneInRow * 3.0f)
+                    __zNear,
+                    objectOnSceneInRow * __zFar * 1000.0f,
+                    9.0f * M_PIF / 18.0f,
+                    Graphics::ProjectionType::Perspective)
 {
     assert(pDevice);
     assert(pTexturesHeap);
@@ -79,11 +463,10 @@ SceneManager::SceneManager(ComPtr<ID3D12Device> pDevice,
 
     _meshManager.reset(new MeshManager(cmdLineOpts.tessellation, pDevice));
 
-    _viewCamera.SetCenter({0.0f, 0.0f, 0.0f});
-    _viewCamera.SetRadius((float)objectOnSceneInRow);
+    _viewCamera.SetPosition({ -5, 1, 0 });
+    _viewCamera.LookAt({-4, 1, 0});
 
-    _shadowCamera.SetCenter({0.0f, 0.0f, 0.0f});
-    _shadowCamera.SetRadius(objectOnSceneInRow * 2.0f);
+    _shadowCamera.SetSphericalCoords({}, 0, 0, objectOnSceneInRow * 2.0f);
 
     if (cmdLineOpts.threads)
     {
@@ -128,6 +511,8 @@ SceneManager::SceneManager(ComPtr<ID3D12Device> pDevice,
     texHeapDesc.NumDescriptors = 100;
     texHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     ThrowIfFailed(pDevice->CreateDescriptorHeap(&texHeapDesc, IID_PPV_ARGS(&_customsHeap)));
+    std::wstring tmp_name = L"_customsHeap";
+    _customsHeap.Get()->SetName(tmp_name.c_str());
 
     {
         D3D12_CPU_DESCRIPTOR_HANDLE customsHeapHandle = _customsHeap->GetCPUDescriptorHandleForHeapStart();
@@ -200,7 +585,35 @@ SceneManager::SceneManager(ComPtr<ID3D12Device> pDevice,
         uavDesc.Buffer.NumElements = 1;
         pDevice->CreateUnorderedAccessView(_finalIntensityBuffer.Get(), nullptr, &uavDesc, customsHeapHandle);
         customsHeapHandle.ptr += CbvSrvUavHeapIncSize;
+
+        const math::mat4f projectionMatrix = _viewCamera.GetProjectionMatrix();
+        CommandList temporaryCmdList{ CommandListType::Direct, _device };
+        _HBAO_effect.Init(_screenWidth, _screenHeight, projectionMatrix, DXGI_FORMAT_R32_FLOAT, _rtManager, pDevice, _meshManager, temporaryCmdList,
+                                                                                                                                                    nullptr, _mrtRts[2], L"HBAO");
+        temporaryCmdList.Close();
+        ExecuteCommandLists(temporaryCmdList);
+
+        customsHeapHandle.ptr += CbvSrvUavHeapIncSize;
+        pDevice->CreateShaderResourceView(_HBAO_effect.GetOut()->_texture.Get(), nullptr, customsHeapHandle);
+        customsHeapHandle.ptr += CbvSrvUavHeapIncSize;
     }
+}
+
+void SceneManager::CreateSceneNodeFromAssimpNode(const aiScene *scene, const aiNode *node, float scale)
+{
+    if (!scene || !node)
+        return;
+
+    for (size_t i = 0; i < node->mNumMeshes; ++i)
+    {
+        aiMesh* mesh = scene->mMeshes[node->mMeshes[i]];
+        auto meshObject = _meshManager->CreateFromAssimpMesh(mesh);
+        _objects.push_back(std::make_shared<SceneObject>(meshObject, _device, nullptr));
+        _objects.back()->Scale({ scale, scale, scale });
+    }
+
+    for (size_t i = 0; i < node->mNumChildren; ++i)
+        CreateSceneNodeFromAssimpNode(scene, node->mChildren[i], scale);
 }
 
 SceneManager::~SceneManager()
@@ -326,14 +739,27 @@ void SceneManager::ExecuteCommandLists(const CommandList & commandList)
     WaitCurrentFrame();
 }
 
-Graphics::SphericalCamera * SceneManager::GetViewCamera()
+Graphics::Camera * SceneManager::GetViewCamera()
 {
     return &_viewCamera;
 }
 
-Graphics::SphericalCamera * SceneManager::GetShadowCamera()
+Graphics::Camera * SceneManager::GetShadowCamera()
 {
     return &_shadowCamera;
+}
+
+void SceneManager::LoadScene(const std::string& filename, float scale)
+{
+    Assimp::Importer importer;
+    const aiScene * scene = importer.ReadFile(filename, aiProcess_Triangulate | aiProcess_CalcTangentSpace | aiProcess_GenNormals | aiProcess_OptimizeGraph);
+    CreateSceneNodeFromAssimpNode(scene, scene->mRootNode, scale);
+}
+
+void SceneManager::ReLoadScene(const std::string& filename, float scale)
+{
+    _objects.clear();
+    LoadScene(filename, scale);
 }
 
 void SceneManager::PopulateClearPassCommandList()
@@ -438,14 +864,23 @@ void SceneManager::PopulateLightPassCommandList()
     // Indicate that the back buffer will be used as a render target.
     ID3D12GraphicsCommandList *pCmdList = _lightPassCmdList->GetInternal().Get();
 
-    PIXBeginEvent(pCmdList, 0, "Light rendering");
-    pCmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    _HBAO_effect.DoHBAO(_lightPassCmdList);
 
-    D3D12_RECT scissor = {0, 0, (LONG)_screenWidth, (LONG)_screenHeight};
+    D3D12_GPU_DESCRIPTOR_HANDLE texHandle;
+    ID3D12DescriptorHeap* ppHeaps[] = { _customsHeap.Get() };
+    pCmdList->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
+
+    //////////////////////////////////////////////////////////////////////////
+    D3D12_VIEWPORT viewport = { 0, 0, (FLOAT)_screenWidth, (FLOAT)_screenHeight, 0.0f, 1.0f };
+    D3D12_RECT scissor = { 0, 0, (LONG)_screenWidth, (LONG)_screenHeight };
+
+    pCmdList->RSSetViewports(1, &viewport);
     pCmdList->RSSetScissorRects(1, &scissor);
 
-    D3D12_VIEWPORT viewport = {0, 0, (FLOAT)_screenWidth, (FLOAT)_screenHeight, 0.0f, 1.0f};
-    pCmdList->RSSetViewports(1, &viewport);
+    pCmdList->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
+
+    PIXBeginEvent(pCmdList, 0, "Light rendering");
+    pCmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
     {
         auto transition = CD3DX12_RESOURCE_BARRIER::Transition(_HDRRt->_texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
@@ -456,10 +891,11 @@ void SceneManager::PopulateLightPassCommandList()
     _rtManager->BindRenderTargets(rts, nullptr, *_lightPassCmdList);
     _rtManager->ClearRenderTarget(*rts[0], *_lightPassCmdList);
 
-    std::array<D3D12_RESOURCE_BARRIER, 3> barriers = {
+    std::array<D3D12_RESOURCE_BARRIER, 4> barriers = {
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[0]->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[1]->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
         CD3DX12_RESOURCE_BARRIER::Transition(_mrtRts[2]->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+        CD3DX12_RESOURCE_BARRIER::Transition(_HBAO_effect.GetOut()->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
     };
 
     pCmdList->ResourceBarrier((UINT)barriers.size(), barriers.data());
@@ -469,26 +905,31 @@ void SceneManager::PopulateLightPassCommandList()
         pCmdList->ResourceBarrier(1, &transition);
     }
 
+    //pCmdList->ResourceBarrier(std::size(barriers), barriers.data());
+    pCmdList->SetPipelineState(_lightPassState->GetPSO().Get());
     pCmdList->SetGraphicsRootSignature(_lightRootSignature.GetInternal().Get());
 
     // Set sampler heap.
-    ID3D12DescriptorHeap* ppHeaps[] = {_customsHeap.Get()};
-    pCmdList->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
-
-    D3D12_GPU_DESCRIPTOR_HANDLE texHandle = _customsHeap->GetGPUDescriptorHandleForHeapStart();
+    texHandle = _customsHeap->GetGPUDescriptorHandleForHeapStart();
     pCmdList->SetGraphicsRootDescriptorTable(0, texHandle);
 
     texHandle.ptr += texHeapIncSize * (_cmdLineOpts.shadow_pass ? 7 : 6);
     pCmdList->SetGraphicsRootDescriptorTable(1, texHandle);
 
-    pCmdList->SetGraphicsRootConstantBufferView(2, _cbvSceneParams->GetGPUVirtualAddress());
+    texHandle = _customsHeap->GetGPUDescriptorHandleForHeapStart();
+    texHandle.ptr += texHeapIncSize * (_cmdLineOpts.shadow_pass ? 8 : 7);
+    pCmdList->SetGraphicsRootDescriptorTable(2, texHandle);
+
+    pCmdList->SetGraphicsRootConstantBufferView(3, _cbvSceneParams->GetGPUVirtualAddress());
 
     _objScreenQuad->Draw(pCmdList);
     PIXEndEvent(pCmdList);
 
+    //////////////////////////////////////////////////////////////////////////
     // First, we need to compute average intensity through the rendered and lighted render target
     // Next, we should use computed intensity to tone final RT
     // This can be easily done with compute shaders
+
 
     PIXBeginEvent(pCmdList, 0, "Luminance computing");
     {
@@ -524,6 +965,7 @@ void SceneManager::PopulateLightPassCommandList()
 
     //////////////////////////////////////////////////////////////////////////
 
+
     PIXBeginEvent(pCmdList, 0, "HDR -> LDR pass");
     {
         auto transition = CD3DX12_RESOURCE_BARRIER::Transition(_swapChainRTs[_frameIndex]->_texture.Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
@@ -547,7 +989,10 @@ void SceneManager::PopulateLightPassCommandList()
     {
         auto transition = CD3DX12_RESOURCE_BARRIER::Transition(_swapChainRTs[_frameIndex]->_texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
         pCmdList->ResourceBarrier(1, &transition);
+        transition = CD3DX12_RESOURCE_BARRIER::Transition(_HBAO_effect.GetOut()->_texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        pCmdList->ResourceBarrier(1, &transition);
     }
+
     PIXEndEvent(pCmdList);
 
     _lightPassCmdList->Close();
@@ -658,7 +1103,7 @@ void SceneManager::ThreadDrawRoutine(size_t threadId)
             }
 
             _objects[currentObjectIndex]->Draw(pThreadCmdList);
-            currentObjectIndex = _drawObjectIndex++;
+            currentObjectIndex = ++_drawObjectIndex;
         }
 
         PIXEndEvent(pThreadCmdList.Get());
@@ -707,6 +1152,8 @@ void SceneManager::CreateRenderTargets()
 
     ExecuteCommandLists(temporaryCmdList);
 }
+
+constexpr uint32_t Align(uint32_t size, uint32_t align) {return (size+align-1) & (~(align-1));}
 
 void SceneManager::CreateCommandLists()
 {
@@ -820,7 +1267,7 @@ void SceneManager::CreateMRTPassRootSignature()
 
 void SceneManager::CreateLightPassRootSignature()
 {
-    _lightRootSignature.Init(3, 2);
+    _lightRootSignature.Init(4, 2);
 
     _lightRootSignature[0].InitAsDescriptorsTable(1);
     _lightRootSignature[0].InitTableRange(0, 0, 4, D3D12_DESCRIPTOR_RANGE_TYPE_SRV);
@@ -828,7 +1275,10 @@ void SceneManager::CreateLightPassRootSignature()
     _lightRootSignature[1].InitAsDescriptorsTable(1);
     _lightRootSignature[1].InitTableRange(0, 4, 1, D3D12_DESCRIPTOR_RANGE_TYPE_SRV);
 
-    _lightRootSignature[2].InitAsCBV(0);
+    _lightRootSignature[2].InitAsDescriptorsTable(1);
+    _lightRootSignature[2].InitTableRange(0, 5, 1, D3D12_DESCRIPTOR_RANGE_TYPE_SRV);
+
+    _lightRootSignature[3].InitAsCBV(0);
 
     StaticSampler textureSampler = {};
     D3D12_STATIC_SAMPLER_DESC& textureSamplerDesc = textureSampler;
@@ -891,6 +1341,7 @@ void SceneManager::CreateIntensityPassRootSignature()
 
     _computePassRootSignature.Finalize(_device);
 }
+
 
 void SceneManager::CreateShadersAndPSOs()
 {
@@ -1084,19 +1535,13 @@ void SceneManager::FillViewProjMatrix()
     assert(_cbvMRT);
     assert(_cbvDepth);
 
-    XMMATRIX viewProjectionMatrix = _viewCamera.GetViewProjMatrix();
-    std::memcpy(reinterpret_cast<perFrameParamsConstantBuffer*>(_cbvMRT)->viewProjectionMatrix, viewProjectionMatrix.r, sizeof(XMMATRIX));
-    {
-        auto eye_pos = _viewCamera.GetEyePosition();
-        std::memcpy(reinterpret_cast<perFrameParamsConstantBuffer*>(_cbvMRT)->cameraPosition, &eye_pos, sizeof(XMFLOAT4));
-    }
+    math::mat4f viewProjectionMatrix = _viewCamera.GetViewProjMatrix();
+    std::memcpy(reinterpret_cast<perFrameParamsConstantBuffer*>(_cbvMRT)->viewProjectionMatrix, viewProjectionMatrix.arr, sizeof(math::mat4f));
+    std::memcpy(reinterpret_cast<perFrameParamsConstantBuffer*>(_cbvMRT)->cameraPosition, &_viewCamera.GetPosition(), sizeof(math::vec3f));
 
-    XMMATRIX depthProjectionMatrix = _shadowCamera.GetViewProjMatrix();
-    std::memcpy(reinterpret_cast<perFrameParamsConstantBuffer*>(_cbvDepth)->viewProjectionMatrix, depthProjectionMatrix.r, sizeof(XMMATRIX));
-    {
-        auto eye_pos = _shadowCamera.GetEyePosition();
-        std::memcpy(reinterpret_cast<perFrameParamsConstantBuffer*>(_cbvDepth)->cameraPosition, &eye_pos, sizeof(XMFLOAT4));
-    }
+    viewProjectionMatrix = _shadowCamera.GetViewProjMatrix();
+    std::memcpy(reinterpret_cast<perFrameParamsConstantBuffer*>(_cbvDepth)->viewProjectionMatrix, viewProjectionMatrix.arr, sizeof(math::mat4f));
+    std::memcpy(reinterpret_cast<perFrameParamsConstantBuffer*>(_cbvDepth)->cameraPosition, &_shadowCamera.GetPosition(), sizeof(math::vec3f));
 }
 
 void SceneManager::FillSceneProperties()
@@ -1105,24 +1550,24 @@ void SceneManager::FillSceneProperties()
     if (!_cbvScene)
         return;
 
-    XMFLOAT4 lightPos = _shadowCamera.GetEyePosition();
+    math::vec3f lightPos = _shadowCamera.GetPosition();
     XMFLOAT3 ambientColor = {0.2f, 0.2f, 0.2f};
     XMFLOAT3 fogColor = {clearColor[0], clearColor[1], clearColor[2]};
-    XMMATRIX shadowMatrix = _shadowCamera.GetViewProjMatrix();
-    XMMATRIX inverseViewProj = XMMatrixInverse(nullptr, _viewCamera.GetViewProjMatrix());
-    XMFLOAT4 eyePosition = _viewCamera.GetEyePosition();
+    math::mat4f shadowMatrix = _shadowCamera.GetViewProjMatrix();
+    math::mat4f inversedViewProj = math::matrixInverse(_viewCamera.GetViewProjMatrix());
+    math::vec3f eyePosition = _viewCamera.GetPosition();
 
-    sceneParamsConstantBuffer* cbuffer = reinterpret_cast<sceneParamsConstantBuffer*>(_cbvScene);
-    std::memcpy(cbuffer->lightPosition, &lightPos, sizeof(XMFLOAT4));
+    auto* cbuffer = reinterpret_cast<sceneParamsConstantBuffer*>(_cbvScene);
+    std::memcpy(cbuffer->lightPosition, &lightPos, sizeof(math::vec3f));
     std::memcpy(cbuffer->ambientColor, &ambientColor, sizeof(XMFLOAT3));
     std::memcpy(cbuffer->fogColor, &fogColor, sizeof(XMFLOAT3));
     // assume that we have box-shaped scene
     cbuffer->sceneSize = std::powf((float)_objects.size(), 0.333f);
     cbuffer->depthMapSize = static_cast<float>(depthMapSize);
 
-    std::memcpy(cbuffer->shadowMatrix, &shadowMatrix.r, sizeof(XMMATRIX));
-    std::memcpy(cbuffer->inverseViewProj, &inverseViewProj, sizeof(XMMATRIX));
-    std::memcpy(cbuffer->camPosition, &eyePosition, sizeof(XMFLOAT4));
+    std::memcpy(cbuffer->shadowMatrix, shadowMatrix.arr, sizeof(math::mat4f));
+    std::memcpy(cbuffer->inverseViewProj, inversedViewProj.arr, sizeof(math::mat4f));
+    std::memcpy(cbuffer->camPosition, &eyePosition, sizeof(math::vec3f));
 }
 
 void SceneManager::CreateRootSignatures()

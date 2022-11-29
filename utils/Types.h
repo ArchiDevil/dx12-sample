@@ -9,6 +9,7 @@ enum optTypes
     disable_shadow_pass,
     enable_tessellation,
     legacy_swapchain,
+	mesh_name,
 };
 
 enum class ShaderType
@@ -62,6 +63,14 @@ struct perFrameParamsConstantBuffer
 {
     float viewProjectionMatrix[4][4];
     float cameraPosition[4];
+	float viewMatrix[4][4];
+};
+
+struct AOParamsConstantBuffer
+{
+	float viewProjectionInvMatrix[4][4];
+	float _screenInvWidth;
+	float _screenInvHeight;
 };
 
 struct CommandLineOptions

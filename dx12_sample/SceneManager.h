@@ -8,9 +8,96 @@
 #include <utils/SceneObject.h>
 #include <utils/CommandList.h>
 #include <utils/Types.h>
-#include <utils/SphericalCamera.h>
+#include <utils/Camera.h>
 
 #include "stdafx.h"
+
+class BlurEffect
+{
+public:
+	void Init(UINT _screenWidth, UINT _screenHeight, float direction[], DXGI_FORMAT format,
+				RenderTargetManager* _rtManager, ComPtr<ID3D12Device> _pDevice, std::shared_ptr<MeshManager>&  _meshManager, std::shared_ptr<RenderTarget> Input,
+				std::shared_ptr<RenderTarget> Output, std::shared_ptr<RenderTarget> Depth, const std::wstring& BlurName = L"Blur");
+
+	void DoBlur(std::unique_ptr<CommandList>&  CmdList);
+
+	std::shared_ptr<RenderTarget> GetOut(void) { return m_Out; };
+	std::shared_ptr<RenderTarget> GetInp(void) { return m_Inp; };
+
+protected:
+	struct BlurParams
+	{
+		float step[2];
+	};
+
+	UINT m_screenWidth = 1024;
+	UINT m_screenHeight = 768;
+	float m_direction[2];
+	RenderTargetManager* m_rtManager = nullptr;
+	std::shared_ptr<RenderTarget> m_Inp;
+	std::shared_ptr<RenderTarget> m_Out;
+	std::shared_ptr<RenderTarget> m_Depth;
+	bool m_OutIsExternalRT;
+	ComPtr<ID3D12Device> m_pDevice;
+	ComPtr<ID3D12DescriptorHeap> m_customsHeap = nullptr;
+	std::wstring m_Name = L"";
+	DXGI_FORMAT m_Format;
+	std::unique_ptr<GraphicsPipelineState>  m_PassState = nullptr;
+	RootSignature  m_RootSignature;
+	std::unique_ptr<SceneObject>  m_objScreenQuad = nullptr;
+	std::shared_ptr<MeshManager>  m_meshManager = nullptr;
+	ComPtr<ID3D12Resource>  m_cbvParams = nullptr;
+	void*                m_cbvParamsMapped = nullptr;
+};
+
+class HBAO
+{
+public:
+	void Init(UINT _screenWidth, UINT _screenHeight, const math::mat4f& ProjectionMatrix, DXGI_FORMAT format,
+		RenderTargetManager* _rtManager, ComPtr<ID3D12Device> _pDevice, std::shared_ptr<MeshManager>&  _meshManager, CommandList& CmdList,
+		std::shared_ptr<RenderTarget> Output, std::shared_ptr<RenderTarget> Depth, const std::wstring& BlurName = L"HBAO");
+	void DoHBAO(std::unique_ptr<CommandList>&  CmdList);
+
+	std::shared_ptr<RenderTarget> GetOut(void) { return m_AOBluredOut; };
+	~HBAO() { if (m_texture_data != nullptr ) 	delete[] m_texture_data; }
+protected:
+
+	struct AOParams
+	{
+		float viewProjectionInvMatrix[4][4];
+		float _screenInvWidth;
+		float _screenInvHeight;
+	};
+
+	void CreateNoise(CommandList& CmdList);
+
+	UINT m_screenWidth = 1024;
+	UINT m_screenHeight = 768;
+	UINT m_AOscreenWidth = m_screenWidth/2;
+	UINT m_AOscreenHeight = m_screenHeight/2;
+	RenderTargetManager* m_rtManager = nullptr;
+	std::shared_ptr<RenderTarget> m_AOOut;
+	std::shared_ptr<RenderTarget> m_AOBluredOut;
+	std::shared_ptr<RenderTarget> m_Depth;
+	bool m_OutIsExternalRT;
+	ComPtr<ID3D12Device> m_pDevice;
+	ComPtr<ID3D12DescriptorHeap> m_customsHeap = nullptr;
+	std::wstring m_Name = L"";
+	DXGI_FORMAT m_Format;
+	std::unique_ptr<GraphicsPipelineState>  m_PassState = nullptr;
+	RootSignature  m_RootSignature;
+	std::unique_ptr<SceneObject>  m_objScreenQuad = nullptr;
+	std::shared_ptr<MeshManager>  m_meshManager = nullptr;
+	ComPtr<ID3D12Resource>  m_cbvParams = nullptr;
+	void*                m_cbvParamsMapped = nullptr;
+	ComPtr<ID3D12Resource>  _Noise;
+	ComPtr<ID3D12Resource>  _NoiseUploadHeap;
+	BlurEffect              BlurEffect_X;
+	BlurEffect              BlurEffect_Y;
+	float*                  m_texture_data = nullptr;
+};
+
+#include <assimp/scene.h>
 
 class SceneManager
 {
@@ -34,6 +121,8 @@ public:
     SceneManager& operator=(SceneManager&&) = delete;
 
     void SetBackgroundCubemap(const std::wstring& name);
+	void ReLoadScene(const std::string& filename, float scale);
+    void LoadScene(const std::string& filename, float scale);
 
     SceneObjectPtr CreateFilledCube();
     SceneObjectPtr CreateOpenedCube();
@@ -44,10 +133,12 @@ public:
     // only for texture creation!
     void ExecuteCommandLists(const CommandList & commandList);
 
-    Graphics::SphericalCamera * GetViewCamera();
-    Graphics::SphericalCamera * GetShadowCamera();
+    Graphics::Camera * GetViewCamera();
+    Graphics::Camera * GetShadowCamera();
 
 private:
+    void CreateSceneNodeFromAssimpNode(const aiScene *scene, const aiNode *node, float scale);
+
     void ThreadDrawRoutine(size_t threadId);
     void FinishWorkerThreads();
 
@@ -65,6 +156,7 @@ private:
     void CreateMRTPassPSO();
     void CreateRootSignatures();
     void CreateRenderTargets();
+	void CreateNoise();
 
     void FillViewProjMatrix();
     void FillSceneProperties();
@@ -76,7 +168,7 @@ private:
 
     void WaitCurrentFrame();
 
-    std::unique_ptr<MeshManager>                _meshManager = nullptr;
+    std::shared_ptr<MeshManager>                _meshManager = nullptr;
 
     // objects vault
     std::vector<SceneObjectPtr>                 _objects {};
@@ -138,8 +230,8 @@ private:
     ComPtr<ID3D12Resource>                      _backgroundTexture;
     ComPtr<ID3D12Resource>                      _intermediateIntensityBuffer = nullptr;
     ComPtr<ID3D12Resource>                      _finalIntensityBuffer = nullptr;
-    Graphics::SphericalCamera                   _viewCamera;
-    Graphics::SphericalCamera                   _shadowCamera;
+    Graphics::Camera                            _viewCamera;
+    Graphics::Camera                            _shadowCamera;
     RenderTargetManager *                       _rtManager = nullptr;
     ComPtr<ID3D12DescriptorHeap>                _texturesHeap = nullptr;
     ComPtr<ID3D12DescriptorHeap>                _customsHeap = nullptr;
@@ -150,6 +242,8 @@ private:
     std::shared_ptr<DepthStencil>               _shadowDepth;
     bool                                        _isFrameWaiting = false;
 
+	HBAO                                        _HBAO_effect;
+	const char*                                 _mesh_name;
     void CreateIntensityPassPSO();
     void CreateIntensityPassRootSignature();
 };

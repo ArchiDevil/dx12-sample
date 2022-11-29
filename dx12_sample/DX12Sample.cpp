@@ -5,10 +5,12 @@
 #include <utils/Math.h>
 #include <utils/Shaders.h>
 #include <utils/FeaturesCollector.h>
+#include <Commdlg.h>
 
 using namespace std::chrono;
+const char* default_mesh = "sponza.obj";
 
-DX12Sample::DX12Sample(int windowWidth, int windowHeight, std::set<optTypes>& opts)
+DX12Sample::DX12Sample(int windowWidth, int windowHeight, std::set<optTypes>& opts, const char* mesh_name)
     : DXSample(windowWidth, windowHeight, L"HELLO YOPTA")
 {
     for (auto& opt : opts)
@@ -38,6 +40,14 @@ DX12Sample::DX12Sample(int windowWidth, int windowHeight, std::set<optTypes>& op
             break;
         }
     }
+
+	_mesh_name = mesh_name;
+	if (_mesh_name == nullptr || strnlen_s(mesh_name, 255) == 0 )
+		_mesh_name = default_mesh;
+
+    _cmdLineOpts.textures = false;
+    _cmdLineOpts.shadow_pass = false;
+    _cmdLineOpts.threads = false;
 }
 
 DX12Sample::~DX12Sample()
@@ -57,24 +67,29 @@ void DX12Sample::OnInit()
     }
 #endif
 
+    _inputManager = std::make_unique<InputManager>(DXSample::m_hwnd, GetModuleHandle(nullptr));
+
     CreateDXGIFactory();
     CreateDevice();
     DumpFeatures();
     CreateCommandQueue();
     CreateSwapChain();
 
-    _RTManager.reset(new RenderTargetManager(_device));
+    _RTManager = std::make_unique<RenderTargetManager>(_device);
     CreateTexturesHeap();
 
-    _sceneManager.reset(new SceneManager(_device,
-                                         m_width,
-                                         m_height,
-                                         _cmdLineOpts,
-                                         _texturesHeap,
-                                         _cmdQueue,
-                                         _swapChain,
-                                         _RTManager.get(),
-                                         _objectsInRow));
+    _sceneManager = std::make_unique<SceneManager>(_device,
+                                                   m_width,
+                                                   m_height,
+                                                   _cmdLineOpts,
+                                                   _texturesHeap,
+                                                   _cmdQueue,
+                                                   _swapChain,
+                                                   _RTManager.get(),
+                                                   _objectsInRow);
+
+	std::string mesh = std::string("assets/meshes/") + _mesh_name;
+    _sceneManager->LoadScene(mesh, 0.05f);
 
     CreateTextures();
     CreateObjects();
@@ -86,8 +101,21 @@ void DX12Sample::OnUpdate()
     static int elapsedFrames = 0;
     static double elapsedTime = 0.0;
 
+    _inputManager->GetKeys();
+    _sceneManager->GetViewCamera()->Update();
+
+    if (_cursorLock)
+    {
+        POINT pt1;
+        POINT pt2;
+        GetCursorPos(&pt1);
+        pt2 = pt1;
+        ScreenToClient(DXSample::m_hwnd, &pt2);
+        SetCursorPos(pt1.x - pt2.x + m_width / 2, pt1.y - pt2.y + m_height / 2);
+    }
+
     microseconds diff = duration_cast<microseconds>(high_resolution_clock::now() - prevTime);
-    double dt = (double)diff.count() / 1000000.0;
+    double dt = (double)diff.count() / 1e6;
 
     prevTime = high_resolution_clock::now();
     elapsedFrames++;
@@ -105,28 +133,100 @@ void DX12Sample::OnUpdate()
     static double time = 0;
     time += dt;
 
-    for (uint32_t objIndex = 0; objIndex < _drawObjectsCount; ++objIndex)
-    {
-        auto & object = _objects[objIndex];
-        object->Rotation((float)time * 0.5f);
-    }
-
     {
         auto shadowCamera = _sceneManager->GetShadowCamera();
         float rotation = (float)time;
-        float inclination = std::sinf((float)time) * 45.0f;
-        shadowCamera->SetInclination(inclination);
-        shadowCamera->SetRotation(rotation);
+        float inclination = std::sinf((float)time) * 22.5f;
+        shadowCamera->SetSphericalCoords({}, rotation, inclination, _objectsInRow * 10.0f);
     }
 
     {
         auto viewCamera = _sceneManager->GetViewCamera();
-        static float inclination = -30.0f, rotation = 0.0f;
-        rotation += 0.05f;
-        float radius = (std::sinf((float)time * 0.5f) + 1.0f) * _objectsInRow / 2 + _objectsInRow;
-        viewCamera->SetInclination(inclination);
-        viewCamera->SetRotation(rotation);
-        viewCamera->SetRadius(radius);
+        auto mouseInfo = _inputManager->GetMouseInfo();
+
+        viewCamera->RotateByLocalQuaternion(math::quaternionFromVecAngle(viewCamera->GetUpVector(), (float)mouseInfo.deltaX * (float)dt * 0.2f));
+        viewCamera->RotateByLocalQuaternion(math::quaternionFromVecAngle(viewCamera->GetRightVector(), -(float)mouseInfo.deltaY * (float)dt * 0.2f));
+
+        double multiplier = _multiplier;
+
+        if (_inputManager->IsKeyDown(DIK_LSHIFT))
+            multiplier *= 2.0f;
+
+        if (_inputManager->IsKeyDown(DIK_W))
+            viewCamera->MoveForwardBackward((float)(dt * multiplier));
+
+        if (_inputManager->IsKeyDown(DIK_S))
+            viewCamera->MoveForwardBackward(-(float)(dt * multiplier));
+
+        if (_inputManager->IsKeyDown(DIK_A))
+            viewCamera->MoveLeftRight((float)(dt * multiplier));
+
+        if (_inputManager->IsKeyDown(DIK_D))
+            viewCamera->MoveLeftRight(-(float)(dt * multiplier));
+
+        if (_inputManager->IsKeyDown(DIK_Q))
+            viewCamera->RotateByLocalQuaternion(math::quaternionFromVecAngle(viewCamera->GetLookVector(), (float)dt / 2.0f));
+
+        if (_inputManager->IsKeyDown(DIK_E))
+            viewCamera->RotateByLocalQuaternion(math::quaternionFromVecAngle(viewCamera->GetLookVector(), -(float)dt / 2.0f));
+
+        if (_inputManager->IsKeyUp(DIK_T))
+        {
+            _cursorLock = !_cursorLock;
+            ShowCursor(!_cursorLock);
+        }
+
+		if (_inputManager->IsKeyUp(DIK_I))
+		{
+			_multiplier += 4;
+			if (_multiplier > 21 )
+			{
+				_multiplier = 21;
+			}
+		}
+		if (_inputManager->IsKeyUp(DIK_K))
+		{
+			_multiplier-=4;
+			if (_multiplier < 0)
+				_multiplier = 1;
+		}
+
+		if (_inputManager->IsKeyDown(DIK_LCONTROL) || _inputManager->IsKeyDown(DIK_RCONTROL) )
+		{
+			if (_inputManager->IsKeyDown(DIK_O))
+			{
+				#define file_name_len 256
+				wchar_t FileName[file_name_len+1] = { '0' };       // buffer for file name
+				wchar_t CurrentDir[file_name_len];
+				GetCurrentDirectory(file_name_len, CurrentDir);
+
+				OPENFILENAME ofn;       // common dialog box structure
+				ZeroMemory(&ofn, sizeof(ofn));
+				ofn.lStructSize = sizeof(ofn);
+				ofn.hwndOwner = GetActiveWindow();
+				ofn.lpstrFile = FileName;
+				ofn.nMaxFile = file_name_len;
+				ofn.lpstrFilter = L"*.OBJ\0";
+				ofn.lpstrInitialDir = CurrentDir;
+				ofn.nFilterIndex = 1;
+				ofn.lpstrFileTitle = L"Open scene";
+				ofn.nMaxFileTitle = 0;
+				ofn.lpstrInitialDir = NULL;
+				ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+
+				if (GetOpenFileName(&ofn) == TRUE)
+				{
+					std::wstring _mesh(ofn.lpstrFile);
+					std::string mesh(_mesh.begin(), _mesh.end());
+					_sceneManager->ReLoadScene(mesh, 1.0);
+
+					_plane = _sceneManager->CreatePlane();
+					_plane->Position({ 0.0f, -(float)_objectsInRow, 0.0f });
+					_plane->Scale({ _objectsInRow * _objectsInRow * 2, 1.0f, _objectsInRow * _objectsInRow * 2 });
+				}
+			}
+
+		}
     }
 }
 
@@ -498,6 +598,7 @@ void DX12Sample::CreateTextures()
     uploadCommandList.Close();
     _sceneManager->ExecuteCommandLists(uploadCommandList);
     _sceneManager->SetBackgroundCubemap(L"assets/textures/ibl_cubemap.dds");
+    _sceneManager->SetTextures(_texture);
 }
 
 void DX12Sample::CreateDXGIFactory()
@@ -575,35 +676,37 @@ void DX12Sample::CreateTexturesHeap()
     texHeapDesc.NumDescriptors = 100;
     texHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     ThrowIfFailed(_device->CreateDescriptorHeap(&texHeapDesc, IID_PPV_ARGS(&_texturesHeap)));
+	std::wstring tmp_name = L"TexturesHeap";
+	_texturesHeap.Get()->SetName(tmp_name.c_str());
 }
 
 void DX12Sample::CreateObjects()
 {
-    for (size_t i = 0; i < _drawObjectsCount; ++i)
-    {
-        if (i % 2 == 0)
-            _objects.push_back(_sceneManager->CreateFilledCube());
-        else
-            _objects.push_back(_sceneManager->CreateOpenedCube());
-    }
+    //for (size_t i = 0; i < _drawObjectsCount; ++i)
+    //{
+    //    if (i % 2 == 0)
+    //        _objects.push_back(_sceneManager->CreateFilledCube());
+    //    else
+    //        _objects.push_back(_sceneManager->CreateOpenedCube());
+    //}
 
-    for (int i = 0; i < _drawObjectsCount; ++i)
-    {
-        uint32_t plane = i / (_objectsInRow * _objectsInRow);
-        uint32_t row = i / _objectsInRow % _objectsInRow;
-        uint32_t col = i % _objectsInRow;
+    //for (int i = 0; i < _drawObjectsCount; ++i)
+    //{
+    //    uint32_t plane = i / (_objectsInRow * _objectsInRow);
+    //    uint32_t row = i / _objectsInRow % _objectsInRow;
+    //    uint32_t col = i % _objectsInRow;
 
-        auto & object = _objects[i];
+    //    auto & object = _objects[i];
 
-        // Shift x and y position to place scene at screen center.
-        float x_coord = _objDistance * col - (_objectsInRow - 1) * _objDistance / 2.0f;
-        float y_coord = _objDistance * plane - (_objectsInRow - 1) * _objDistance / 2.0f;
-        float z_coord = _objDistance * row - (_objectsInRow - 1) * _objDistance / 2.0f;
+    //    // Shift x and y position to place scene at screen center.
+    //    float x_coord = _objDistance * col - (_objectsInRow - 1) * _objDistance / 2.0f;
+    //    float y_coord = _objDistance * plane - (_objectsInRow - 1) * _objDistance / 2.0f;
+    //    float z_coord = _objDistance * row - (_objectsInRow - 1) * _objDistance / 2.0f;
 
-        object->Position({x_coord, y_coord, z_coord});
-    }
+    //    object->Position({ x_coord, y_coord, z_coord });
+    //}
 
     _plane = _sceneManager->CreatePlane();
-    _plane->Position({0.0f, -(float)_objectsInRow, 0.0f});
-    _plane->Scale({_objectsInRow * _objectsInRow * 2, 1.0f, _objectsInRow * _objectsInRow * 2});
+    _plane->Position({ 0.0f, -(float)_objectsInRow, 0.0f });
+    _plane->Scale({ _objectsInRow * _objectsInRow * 2, 1.0f, _objectsInRow * _objectsInRow * 2 });
 }

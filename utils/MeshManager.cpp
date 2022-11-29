@@ -349,3 +349,59 @@ std::shared_ptr<MeshObject> MeshManager::CreateScreenQuad()
 
     return _screenQuad;
 }
+
+std::shared_ptr<MeshObject> MeshManager::CreateFromAssimpMesh(const aiMesh* mesh)
+{
+    if (!mesh)
+        return nullptr;
+
+    std::vector<geometryVertex> geometryData(mesh->mNumVertices);
+    std::vector<uint32_t>       indicesData(mesh->mNumFaces * 3);
+
+    for (size_t i = 0; i < mesh->mNumVertices; ++i)
+    {
+        geometryData[i].position[0] = mesh->mVertices[i].x;
+        geometryData[i].position[1] = mesh->mVertices[i].y;
+        geometryData[i].position[2] = mesh->mVertices[i].z;
+
+        geometryData[i].normal[0] = mesh->mNormals[i].x;
+        geometryData[i].normal[1] = mesh->mNormals[i].y;
+        geometryData[i].normal[2] = mesh->mNormals[i].z;
+
+        if (mesh->HasTextureCoords(0))
+        {
+            geometryData[i].uv[0] = mesh->mTextureCoords[0][i].x;
+            geometryData[i].uv[1] = mesh->mTextureCoords[0][i].y;
+        }
+
+        if (mesh->HasTangentsAndBitangents())
+        {
+            geometryData[i].binormal[0] = mesh->mBitangents[i].x;
+            geometryData[i].binormal[1] = mesh->mBitangents[i].y;
+            geometryData[i].binormal[2] = mesh->mBitangents[i].z;
+
+            geometryData[i].tangent[0] = mesh->mTangents[i].x;
+            geometryData[i].tangent[1] = mesh->mTangents[i].y;
+            geometryData[i].tangent[2] = mesh->mTangents[i].z;
+        }
+    }
+
+    for (size_t i = 0; i < mesh->mNumFaces; ++i)
+    {
+        const aiFace* face = &mesh->mFaces[i];
+        assert(face->mNumIndices == 3);
+        for (size_t j = 0; j < face->mNumIndices; ++j)
+        {
+            assert(face->mIndices[j] < mesh->mNumVertices);
+            indicesData[i * 3 + j] = face->mIndices[j];
+        }
+    }
+
+    std::shared_ptr<MeshObject> outMesh = std::make_shared<MeshObject>(std::vector<uint8_t>{(uint8_t*)geometryData.data(), (uint8_t*)(geometryData.data() + geometryData.size())},
+                                                                       sizeof(geometryVertex),
+                                                                       indicesData,
+                                                                       _device,
+                                                                       D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+    return outMesh;
+}

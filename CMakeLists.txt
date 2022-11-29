@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include_directories(.)
+include_directories(3rdparty/assimp/include)
 add_compile_definitions(UNICODE)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -16,3 +17,4 @@ add_custom_target(copy_assets
 add_subdirectory(3rdparty)
 add_subdirectory(dx12_sample)
 add_subdirectory(utils)
+add_subdirectory(math)

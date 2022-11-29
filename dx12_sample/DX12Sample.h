@@ -4,14 +4,16 @@
 
 #include "DXSample.h"
 #include "SceneManager.h"
-#include <utils/SceneObject.h>
 
-class DX12Sample :
+#include <utils/SceneObject.h>
+#include <utils/InputManager.h>
+
+class DX12Sample final :
     public DXSample
 {
 public:
-    DX12Sample(int windowWidth, int windowHeight, std::set<optTypes>& opts);
-    ~DX12Sample();
+    DX12Sample(int windowWidth, int windowHeight, std::set<optTypes>& opts, const char* mesh_name);
+    ~DX12Sample() override;
 
     virtual void OnInit() override;
     virtual void OnUpdate() override;
@@ -31,6 +33,7 @@ private:
 
     void DumpFeatures();
 
+    std::unique_ptr<InputManager>               _inputManager = nullptr;
     std::unique_ptr<SceneManager>               _sceneManager = nullptr;
     std::unique_ptr<RenderTargetManager>        _RTManager = nullptr;
 
@@ -45,6 +48,7 @@ private:
     static constexpr float                      _objDistance = 1.0f;
     static constexpr size_t                     _drawObjectsCount = _objectsInRow * _objectsInRow * _objectsInRow;
     static constexpr size_t                     _swapChainBuffersCount = 2;
+    bool                                        _cursorLock = false;
 
     ComPtr<ID3D12Device>                        _device = nullptr;
     ComPtr<IDXGIFactory4>                       _DXFactory = nullptr;
@@ -57,4 +61,6 @@ private:
 
     ComPtr<ID3D12DescriptorHeap>                _texturesHeap = nullptr;
     std::array<ComPtr<ID3D12Resource>, 6>       _texture = {};
+     const char*                                 _mesh_name;
+	 double                                     _multiplier = 1.0f;
 };

@@ -16,6 +16,8 @@ RenderTargetManager::RenderTargetManager(ComPtr<ID3D12Device> device)
     rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
     rtvHeapDesc.NodeMask = 0;
     ThrowIfFailed(device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&_rtvDescriptorHeap)));
+	std::wstring tmp_name = L"_rtvDescriptorHeap";
+	_rtvDescriptorHeap.Get()->SetName(tmp_name.c_str());
 
     D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
     dsvHeapDesc.NumDescriptors = maxDescriptorsCount;
@@ -23,6 +25,8 @@ RenderTargetManager::RenderTargetManager(ComPtr<ID3D12Device> device)
     dsvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
     dsvHeapDesc.NodeMask = 0;
     ThrowIfFailed(device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&_dsvDescriptorHeap)));
+	tmp_name = L"_dsvDescriptorHeap";
+	_dsvDescriptorHeap.Get()->SetName(tmp_name.c_str());
 }
 
 std::shared_ptr<RenderTarget> RenderTargetManager::CreateRenderTarget(DXGI_FORMAT format,
